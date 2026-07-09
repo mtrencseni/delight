@@ -167,6 +167,44 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
       return undefined as T;
     case "quicklook_close":
       return undefined as T;
+    case "item_details": {
+      const dir = String(args?.dir ?? "");
+      const name = (args?.name as string | null) ?? null;
+      try {
+        const l = listDir(dir, name); // succeeds only for directories
+        const kids = l.entries
+          .filter((e) => !e.hidden)
+          .sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
+        return {
+          createdMs: NOW - 40 * day,
+          owner: "demo",
+          appName: null,
+          appPath: null,
+          dirCount: kids.length,
+          children: kids.slice(0, 9).map((e) => ({
+            name: e.name,
+            isDir: e.isDir,
+            isSymlink: e.isSymlink,
+            ext: e.ext,
+          })),
+        } as T;
+      } catch {
+        return {
+          createdMs: NOW - 40 * day,
+          owner: "demo",
+          appName: "Preview",
+          appPath: "/System/Applications/Preview.app",
+          dirCount: null,
+          children: [],
+        } as T;
+      }
+    }
+    case "file_thumbnail": {
+      const nm = String(args?.name ?? args?.dir);
+      const hue = (nm.length * 57) % 360;
+      const s = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='6' fill='hsl(${hue} 55% 50%)'/><text x='32' y='42' font-size='30' text-anchor='middle' fill='white' font-family='sans-serif'>${nm.slice(0, 1).toUpperCase()}</text></svg>`;
+      return ("data:image/svg+xml," + encodeURIComponent(s)) as T;
+    }
 
     case "fs_roots":
       return [{ name: SEP, path: SEP }] as T;

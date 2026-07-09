@@ -124,6 +124,7 @@ class App {
       if (ZOOM_LEVELS.includes(s.defaultZoom)) state.settings.defaultZoom = s.defaultZoom;
       if (typeof s.lowercaseTabs === "boolean") state.settings.lowercaseTabs = s.lowercaseTabs;
       if (typeof s.systemIcons === "boolean") state.settings.systemIcons = s.systemIcons;
+      if (typeof s.chipCards === "boolean") state.settings.chipCards = s.chipCards;
     }
     state.zoom = ZOOM_LEVELS.includes(saved?.zoom) ? saved.zoom : state.settings.defaultZoom;
   }
@@ -299,6 +300,11 @@ class App {
         state.settings.systemIcons = v;
         // Re-render visible rows in every pane so icons switch immediately.
         for (const view of this.views.values()) view.panes?.forEach((p) => p.renderRows());
+        persist();
+      },
+      onChipCards: (v) => {
+        state.settings.chipCards = v;
+        for (const view of this.views.values()) view.panes?.forEach((p) => p.refreshView());
         persist();
       },
     });

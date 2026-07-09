@@ -1,14 +1,18 @@
 import { invoke } from "./ipc";
-import type { Entry, Listing, Location, PaneState, SortKey } from "./types";
-import { clamp, fmtDate, humanSize } from "./format";
+import type { ChildEntry, Details, Entry, Listing, Location, PaneState, SortKey, ViewMode } from "./types";
+import { clamp, fmtDate, fmtDateCompact, humanSize } from "./format";
 import { fileIcon, icons } from "./icons";
 import {
+  cachedDetails,
   cachedIcon,
   cachedIconForPath,
+  cachedThumbnail,
+  fetchDetails,
   fetchIcon,
   fetchIconForPath,
+  fetchThumbnail,
 } from "./sysicons";
-import { GRID_MAX, GRID_MIN } from "./state";
+import { GRID_MAX, GRID_MIN, state } from "./state";
 
 const UP_ENTRY: Entry = {
   name: "..",
@@ -72,7 +76,8 @@ export class PaneView {
   private rowLayer: HTMLElement;
   private statusText: HTMLElement;
   private sizeSlider: HTMLInputElement;
-  private viewBtn: HTMLButtonElement;
+  private viewSeg: HTMLElement;
+  private viewBtns = new Map<ViewMode, HTMLButtonElement>();
   private locBtn: HTMLButtonElement;
   private locPop: HTMLElement | null = null;
   private headCells = new Map<SortKey, HTMLElement>();
@@ -80,6 +85,9 @@ export class PaneView {
   private lastClick = { i: -1, t: 0 };
   /** Finder-style disclosure state, keyed by dirPath+name. Session-only. */
   private expandState = new Map<string, ExpandState>();
+  /** Chips view: debounce detail/thumbnail fetches + track the active item. */
+  private chipTimer = 0;
+  private chipKey = "";
 
   constructor(st: PaneState, host: PaneHost) {
     this.st = st;
@@ -94,12 +102,24 @@ export class PaneView {
     this.pathInput.spellcheck = false;
     this.pathInput.autocomplete = "off";
 
-    this.viewBtn = document.createElement("button");
-    this.viewBtn.className = "pbtn";
-    this.viewBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      this.setViewMode(this.st.viewMode === "grid" ? "list" : "grid");
-    });
+    this.viewSeg = div("viewseg");
+    const modes: [ViewMode, string, string][] = [
+      ["list", icons.viewList, "List view"],
+      ["chips", icons.viewChips, "Chips view"],
+      ["grid", icons.viewGrid, "Icon view"],
+    ];
+    for (const [mode, ic, title] of modes) {
+      const b = document.createElement("button");
+      b.className = "segbtn";
+      b.innerHTML = ic;
+      b.title = title;
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.setViewMode(mode);
+      });
+      this.viewBtns.set(mode, b);
+      this.viewSeg.append(b);
+    }
 
     this.locBtn = document.createElement("button");
     this.locBtn.className = "pbtn";
@@ -110,7 +130,7 @@ export class PaneView {
       this.toggleLocations();
     });
 
-    bar.append(this.pathInput, this.viewBtn, this.locBtn);
+    bar.append(this.pathInput, this.viewSeg, this.locBtn);
 
     this.errBox = div("pane-error hidden");
 
@@ -208,8 +228,12 @@ export class PaneView {
     return this.st.viewMode === "grid";
   }
 
+  private isChips(): boolean {
+    return this.st.viewMode === "chips";
+  }
+
   private itemIndex(e: MouseEvent): number {
-    const el = (e.target as HTMLElement).closest<HTMLElement>(".row, .tile");
+    const el = (e.target as HTMLElement).closest<HTMLElement>(".row, .tile, .crow, .chip");
     return el ? Number(el.dataset.i) : -1;
   }
 
@@ -358,6 +382,7 @@ export class PaneView {
 
   /** Right-arrow: grid → next item; list → expand (or step into) a dir. */
   expandCursor(): void {
+    if (this.isChips()) return;
     if (this.isGrid()) {
       this.setCursor(this.st.cursor + 1);
       return;
@@ -374,6 +399,7 @@ export class PaneView {
 
   /** Left-arrow: grid → previous item; list → collapse (or hop to parent). */
   collapseCursor(): void {
+    if (this.isChips()) return;
     if (this.isGrid()) {
       this.setCursor(this.st.cursor - 1);
       return;
@@ -396,7 +422,7 @@ export class PaneView {
 
   // ---- view mode -------------------------------------------------------------
 
-  private setViewMode(mode: "list" | "grid"): void {
+  private setViewMode(mode: ViewMode): void {
     if (this.st.viewMode === mode) return;
     this.st.viewMode = mode;
     this.applyViewMode();
@@ -404,12 +430,17 @@ export class PaneView {
     this.host.changed();
   }
 
+  /** Re-fit the chip layout (used when the chip-cards setting changes). */
+  refreshView(): void {
+    this.applyViewMode();
+    if (this.st.listing) this.rebuild(true);
+  }
+
   private applyViewMode(): void {
-    const grid = this.isGrid();
-    this.el.classList.toggle("grid", grid);
-    // Show the icon for the mode you'd switch to.
-    this.viewBtn.innerHTML = grid ? icons.viewList : icons.viewGrid;
-    this.viewBtn.title = grid ? "List view" : "Icon view";
+    this.el.classList.toggle("grid", this.isGrid());
+    this.el.classList.toggle("chips", this.isChips());
+    this.el.classList.toggle("chip-cards", this.isChips() && state.settings.chipCards);
+    for (const [mode, btn] of this.viewBtns) btn.classList.toggle("on", mode === this.st.viewMode);
   }
 
   // ---- sorting / view building -----------------------------------------------
@@ -451,8 +482,10 @@ export class PaneView {
     const cmp = this.cmp();
 
     const rows: ViewRow[] = [];
-    if (this.isGrid()) {
-      // Flat current directory — no "..", no disclosure (like Finder).
+    if (this.isGrid() || this.isChips()) {
+      // Flat current directory, no disclosure. Chips keeps ".." for going up.
+      if (this.isChips() && l.parent)
+        rows.push({ entry: UP_ENTRY, depth: 0, dirPath: l.path, key: " up", open: false });
       for (const en of l.entries.filter((e) => show || !e.hidden).sort(cmp)) {
         rows.push({ entry: en, depth: 0, dirPath: l.path, key: `${l.path} ${en.name}`, open: false });
       }
@@ -505,11 +538,16 @@ export class PaneView {
 
   renderRows(): void {
     if (this.isGrid()) this.renderGrid();
+    else if (this.isChips()) this.renderChips();
     else this.renderList();
   }
 
+  private remPx(): number {
+    return parseFloat(getComputedStyle(document.documentElement).fontSize);
+  }
+
   private rowH(): number {
-    return parseFloat(getComputedStyle(document.documentElement).fontSize) * ROW_REM;
+    return this.remPx() * ROW_REM;
   }
 
   private renderList(): void {
@@ -563,6 +601,45 @@ export class PaneView {
       empty.textContent = "Nothing to see here";
       this.rowLayer.append(empty);
     }
+  }
+
+  // ---- chips geometry ----
+  // Every row is a compact row except the cursor row, which is a tall chip.
+  private compactRowH(): number {
+    return this.remPx() * (state.settings.chipCards ? 2.6 : ROW_REM);
+  }
+  private chipH(): number {
+    // Folders carry an extra peek line, so they need a touch more height.
+    const en = this.view[this.st.cursor]?.entry;
+    const tall = !!en && en !== UP_ENTRY && en.isDir;
+    return this.remPx() * (tall ? 8.5 : 7.25);
+  }
+  private chipOffset(i: number): number {
+    const rh = this.compactRowH();
+    const cur = this.st.cursor;
+    return i <= cur ? i * rh : cur * rh + this.chipH() + (i - cur - 1) * rh;
+  }
+  private chipIndexAtY(y: number): number {
+    const rh = this.compactRowH();
+    const cur = this.st.cursor;
+    if (y < cur * rh) return Math.floor(y / rh);
+    if (y < cur * rh + this.chipH()) return cur;
+    return cur + 1 + Math.floor((y - cur * rh - this.chipH()) / rh);
+  }
+
+  private renderChips(): void {
+    const rh = this.compactRowH();
+    const n = this.view.length;
+    this.spacer.style.height = `${n * rh + (this.chipH() - rh)}px`;
+    const top = this.scroller.scrollTop;
+    const vh = this.scroller.clientHeight;
+    const a = clamp(this.chipIndexAtY(top) - OVERSCAN, 0, Math.max(0, n - 1));
+    const b = clamp(this.chipIndexAtY(top + vh) + OVERSCAN, 0, n);
+    const frag = document.createDocumentFragment();
+    for (let i = a; i < b; i++) {
+      frag.append(i === this.st.cursor ? this.buildChip(i, rh) : this.buildChipRow(i, rh));
+    }
+    this.finishRender(frag, n);
   }
 
   private iconInto(ic: HTMLElement, en: Entry, dirPath: string): void {
@@ -643,6 +720,218 @@ export class PaneView {
     return tile;
   }
 
+  // ---- chips: compact row + expanded chip ----
+
+  private buildChipRow(i: number, rh: number): HTMLElement {
+    const { entry: en, dirPath } = this.view[i];
+    const row = div(
+      "crow" + (en.isDir ? " is-dir" : "") + (en.isSymlink ? " is-link" : "") + (en.hidden ? " is-hidden" : "")
+    );
+    row.dataset.i = String(i);
+    const gap = state.settings.chipCards ? 3 : 0;
+    row.style.top = `${this.chipOffset(i) + gap}px`;
+    row.style.height = `${rh - gap * 2}px`;
+    const ic = div("ficon crowicon");
+    this.iconInto(ic, en, dirPath);
+    const name = document.createElement("span");
+    name.className = "fname";
+    name.textContent = en.name;
+    const size = div("crowmeta");
+    size.textContent = en === UP_ENTRY ? "" : en.isDir ? "<DIR>" : humanSize(en.size);
+    const mod = div("crowmeta");
+    mod.textContent = fmtDate(en.modifiedMs);
+    row.append(ic, name, size, mod);
+    return row;
+  }
+
+  private kindLabel(ext: string | null): string {
+    const map: Record<string, string> = {
+      image: "Image",
+      video: "Video",
+      audio: "Audio",
+      archive: "Archive",
+      code: "Code",
+      doc: "Document",
+      pdf: "PDF document",
+      exec: "Application",
+    };
+    const cls = fileIcon(ext).cls;
+    return map[cls] ?? (ext ? `${ext.toUpperCase()} file` : "File");
+  }
+
+  private buildChip(i: number, rh: number): HTMLElement {
+    const { entry: en, dirPath } = this.view[i];
+    const chip = div(
+      "chip" + (en.isDir ? " is-dir" : "") + (en.isSymlink ? " is-link" : "") + (en.hidden ? " is-hidden" : "")
+    );
+    chip.dataset.i = String(i);
+    chip.style.top = `${this.chipOffset(i) + 4}px`;
+    chip.style.height = `${this.chipH() - 8}px`;
+
+    const thumb = div("chthumb");
+    const body = div("chbody");
+    const title = div("chtitle");
+    const sub = div("chsub");
+    body.append(title, sub);
+    chip.append(thumb, body);
+
+    if (en === UP_ENTRY) {
+      const ic = div("ficon");
+      ic.innerHTML = icons.up;
+      thumb.append(ic);
+      title.textContent = "..";
+      sub.textContent = "Parent folder";
+      return chip;
+    }
+
+    this.chipKey = `${dirPath} ${en.name}`;
+    title.textContent = en.name;
+
+    const ic = div("ficon");
+    this.iconInto(ic, en, dirPath);
+    thumb.append(ic);
+
+    const kind = document.createElement("span");
+    kind.textContent = en.isDir ? "Folder" : this.kindLabel(en.ext);
+    sub.append(kind);
+
+    const mk = (label: string, field: string, val: string) => {
+      const t = div("chtile");
+      const l = div("chtile-l");
+      l.textContent = label;
+      const v = div("chtile-v");
+      v.dataset.field = field;
+      v.textContent = val;
+      t.append(l, v);
+      return t;
+    };
+    const tiles = div("chtiles");
+    const modStr = fmtDateCompact(en.modifiedMs);
+    if (en.isDir) {
+      tiles.append(mk("Items", "items", "…"), mk("Created", "created", "…"), mk("Modified", "modified", modStr), mk("Owner", "owner", "…"));
+    } else {
+      tiles.append(mk("Size", "size", humanSize(en.size)), mk("Created", "created", "…"), mk("Modified", "modified", modStr), mk("Owner", "owner", "…"));
+    }
+    body.append(tiles);
+    if (en.isDir) {
+      const peek = div("chpeek");
+      peek.dataset.field = "peek";
+      body.append(peek);
+    }
+
+    const cd = cachedDetails(dirPath, en.name);
+    if (cd) this.applyChipDetails(chip, en, dirPath, cd);
+    if (!en.isDir) {
+      const ct = cachedThumbnail(dirPath, en.name);
+      if (ct) this.applyChipThumb(chip, ct);
+    }
+    this.scheduleChipData(this.chipKey, dirPath, en);
+    return chip;
+  }
+
+  private scheduleChipData(key: string, dirPath: string, en: Entry): void {
+    clearTimeout(this.chipTimer);
+    const haveDetails = cachedDetails(dirPath, en.name) !== undefined;
+    const haveThumb = en.isDir || cachedThumbnail(dirPath, en.name) !== undefined;
+    if (haveDetails && haveThumb) return; // already applied synchronously
+    this.chipTimer = window.setTimeout(() => {
+      if (this.chipKey !== key) return; // moved on before the debounce fired
+      void fetchDetails(dirPath, en.name).then((d) => {
+        if (this.chipKey !== key) return;
+        const chip = this.rowLayer.querySelector<HTMLElement>(".chip");
+        if (chip) this.applyChipDetails(chip, en, dirPath, d);
+      });
+      if (!en.isDir) {
+        void fetchThumbnail(dirPath, en.name).then((uri) => {
+          if (this.chipKey !== key || !uri) return;
+          const chip = this.rowLayer.querySelector<HTMLElement>(".chip");
+          if (chip) this.applyChipThumb(chip, uri);
+        });
+      }
+    }, 140);
+  }
+
+  private applyChipDetails(chip: HTMLElement, en: Entry, dirPath: string, d: Details): void {
+    const set = (field: string, val: string) => {
+      const el = chip.querySelector<HTMLElement>(`[data-field="${field}"]`);
+      if (el) el.textContent = val;
+    };
+    set("created", fmtDateCompact(d.createdMs));
+    set("owner", d.owner ?? "—");
+    if (en.isDir) {
+      const n = d.dirCount;
+      set("items", n != null ? String(n) : "—");
+      const sub = chip.querySelector(".chsub");
+      if (sub) {
+        const k = sub.querySelector("span");
+        if (k) k.textContent = n != null ? `Folder · ${n} item${n === 1 ? "" : "s"}` : "Folder";
+      }
+      const peek = chip.querySelector<HTMLElement>('[data-field="peek"]');
+      if (peek) {
+        const shown = d.children.slice(0, 4).map((c) => c.name);
+        const more = (n ?? d.children.length) - shown.length;
+        peek.textContent = shown.join(", ") + (more > 0 ? `, and ${more} more` : "");
+      }
+      this.applyChipDirGrid(chip, dirPath, d.children);
+    } else if (d.appName) {
+      this.applyChipOpensWith(chip, d.appName, d.appPath);
+    }
+  }
+
+  private applyChipOpensWith(chip: HTMLElement, appName: string, appPath: string | null): void {
+    const sub = chip.querySelector(".chsub");
+    if (!sub) return;
+    sub.querySelector(".opens")?.remove();
+    const pill = div("opens");
+    const ic = div("opensic");
+    const label = document.createElement("span");
+    label.textContent = `Opens with ${appName}`;
+    pill.append(ic, label);
+    sub.append(pill);
+    if (!appPath) return;
+    const cached = cachedIconForPath(appPath);
+    const put = (uri: string) => {
+      const img = new Image();
+      img.alt = "";
+      img.src = uri;
+      ic.replaceChildren(img);
+    };
+    if (cached) put(cached);
+    else void fetchIconForPath(appPath).then((uri) => uri && ic.isConnected && put(uri));
+  }
+
+  private applyChipThumb(chip: HTMLElement, uri: string): void {
+    const thumb = chip.querySelector(".chthumb");
+    if (!thumb) return;
+    const img = new Image();
+    img.alt = "";
+    img.className = "chthumb-img";
+    img.src = uri;
+    thumb.replaceChildren(img);
+  }
+
+  private applyChipDirGrid(chip: HTMLElement, dirPath: string, children: ChildEntry[]): void {
+    const thumb = chip.querySelector(".chthumb");
+    if (!thumb || children.length === 0) return;
+    const grid = div("chthumb-grid");
+    for (const c of children.slice(0, 4)) {
+      const cell = div("ficon chgrid-ic");
+      const synth: Entry = {
+        name: c.name,
+        stem: c.name,
+        ext: c.ext,
+        isDir: c.isDir,
+        isSymlink: c.isSymlink,
+        size: 0,
+        modifiedMs: null,
+        hidden: false,
+      };
+      this.iconInto(cell, synth, dirPath);
+      grid.append(cell);
+    }
+    thumb.replaceChildren(grid);
+  }
+
   private setSysImg(ic: HTMLElement, uri: string): void {
     const img = document.createElement("img");
     img.alt = "";
@@ -667,6 +956,13 @@ export class PaneView {
 
   setCursor(i: number, ensure = true): void {
     this.st.cursor = clamp(i, 0, Math.max(0, this.view.length - 1));
+    // Chips: the cursor row changes size (it becomes the chip), so the whole
+    // layout shifts — re-render rather than just toggling a class.
+    if (this.isChips()) {
+      this.renderRows();
+      if (ensure && this.ensureVisible()) this.renderRows();
+      return;
+    }
     this.rowLayer.querySelectorAll(".is-cursor").forEach((r) => r.classList.remove("is-cursor"));
     this.rowLayer.querySelector(`[data-i="${this.st.cursor}"]`)?.classList.add("is-cursor");
     if (ensure && this.ensureVisible()) this.renderRows();
@@ -679,6 +975,9 @@ export class PaneView {
     if (this.isGrid()) {
       h = this.tileH();
       y = Math.floor(this.st.cursor / this.gridCols()) * h;
+    } else if (this.isChips()) {
+      h = this.chipH();
+      y = this.chipOffset(this.st.cursor);
     } else {
       h = this.rowH();
       y = this.st.cursor * h;
@@ -689,7 +988,7 @@ export class PaneView {
     return true;
   }
 
-  /** Up/down: one row in list, one grid-row (± columns) in grid. */
+  /** Up/down: one row in list/chips, one grid-row (± columns) in grid. */
   moveCursor(d: number): void {
     const step = this.isGrid() ? this.gridCols() : 1;
     this.setCursor(this.st.cursor + d * step);
@@ -697,9 +996,12 @@ export class PaneView {
 
   movePage(d: 1 | -1): void {
     const s = this.scroller;
-    const per = this.isGrid()
-      ? Math.max(1, Math.floor(s.clientHeight / this.tileH()) - 1) * this.gridCols()
-      : Math.max(1, Math.floor(s.clientHeight / this.rowH()) - 1);
+    let per: number;
+    if (this.isGrid())
+      per = Math.max(1, Math.floor(s.clientHeight / this.tileH()) - 1) * this.gridCols();
+    else if (this.isChips())
+      per = Math.max(1, Math.floor(s.clientHeight / this.compactRowH()) - 1);
+    else per = Math.max(1, Math.floor(s.clientHeight / this.rowH()) - 1);
     this.setCursor(this.st.cursor + d * per);
   }
 

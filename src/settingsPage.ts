@@ -9,6 +9,7 @@ export interface SettingsHooks {
   onDefaultZoom(z: number): void;
   onLowercaseTabs(v: boolean): void;
   onSystemIcons(v: boolean): void;
+  onChipCards(v: boolean): void;
 }
 
 export interface SettingsPage {
@@ -76,6 +77,7 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
   const hiddenSw = makeSwitch(() => hooks.get().showHidden, hooks.onHidden);
   const lowerSw = makeSwitch(() => hooks.get().lowercaseTabs, hooks.onLowercaseTabs);
   const sysIconSw = makeSwitch(() => hooks.get().systemIcons, hooks.onSystemIcons);
+  const chipCardsSw = makeSwitch(() => hooks.get().chipCards, hooks.onChipCards);
 
   // Default zoom stepper
   const stepper = el("div", "stepper");
@@ -115,6 +117,11 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     row("System file icons", "Use macOS icons instead of Delight's vector set", sysIconSw)
   );
 
+  section(
+    "Chips view",
+    row("Card rows", "Show every row as a card instead of a compact accordion", chipCardsSw)
+  );
+
   const setSwitch = (s: HTMLElement, on: boolean) => {
     s.classList.toggle("on", on);
     s.setAttribute("aria-checked", String(on));
@@ -126,6 +133,7 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     setSwitch(hiddenSw, s.showHidden);
     setSwitch(lowerSw, s.lowercaseTabs);
     setSwitch(sysIconSw, s.systemIcons);
+    setSwitch(chipCardsSw, s.chipCards);
     val.textContent = `${s.defaultZoom}%`;
   }
   sync();

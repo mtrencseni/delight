@@ -40,6 +40,9 @@ export const icons = {
   viewGrid: svg(
     '<rect x="2.5" y="2.5" width="4.6" height="4.6" rx="1"/><rect x="8.9" y="2.5" width="4.6" height="4.6" rx="1"/><rect x="2.5" y="8.9" width="4.6" height="4.6" rx="1"/><rect x="8.9" y="8.9" width="4.6" height="4.6" rx="1"/>'
   ),
+  viewChips: svg(
+    '<rect x="2" y="2.5" width="12" height="5.5" rx="1.2"/><path d="M2.5 10.6h11M2.5 13h7"/>'
+  ),
   bookmarks: svg('<path d="M4 2.5h8v11l-4-2.6-4 2.6z"/>'),
   house: svg('<path d="M2.5 7.5 8 3l5.5 4.5"/><path d="M4 6.9V13h8V6.9"/>'),
 };

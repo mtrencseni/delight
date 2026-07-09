@@ -723,6 +723,270 @@ body.col-resizing * {
   color: #ffffff;
 }
 
+/* ---------- view segmented control ---------- */
+.viewseg {
+  display: flex;
+  gap: 2px;
+  flex: none;
+  padding: 2px;
+  background: var(--panel-alt);
+  border-radius: 0.4375rem;
+}
+
+.segbtn {
+  width: 1.375rem;
+  height: 1.375rem;
+  padding: 0.25rem;
+  border-radius: 0.3125rem;
+  color: var(--text-dim);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.segbtn:hover {
+  color: var(--text);
+}
+
+.segbtn.on {
+  background: var(--panel);
+  color: var(--accent);
+  box-shadow: var(--shadow);
+}
+
+/* ---------- chips view ---------- */
+.pane.chips .listhead {
+  display: none;
+}
+
+.crow {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.4375rem;
+  padding: 0 0.625rem;
+  cursor: default;
+}
+
+.crow:hover {
+  background: var(--hover);
+}
+
+.pane.chip-cards .crow {
+  left: 0.5rem;
+  right: 0.5rem;
+  padding: 0 0.5rem;
+  background: var(--panel-alt);
+  border: 0.5px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+.pane.chip-cards .crow:hover {
+  border-color: var(--border-strong, var(--accent));
+}
+
+.crowicon {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+  color: var(--text-faint);
+}
+
+.crow.is-dir .crowicon {
+  color: var(--folder);
+}
+
+.crow.is-link .crowicon {
+  color: var(--link);
+}
+
+.crow.is-hidden {
+  opacity: 0.55;
+}
+
+.crow .fname {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crowmeta {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.crow > .crowmeta:nth-child(3) {
+  width: 4.5rem;
+}
+
+.crow > .crowmeta:nth-child(4) {
+  width: 8rem;
+}
+
+.chip {
+  position: absolute;
+  left: 0.5rem;
+  right: 0.5rem;
+  box-sizing: border-box;
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.625rem;
+  background: var(--panel-alt);
+  border: 0.5px solid var(--border);
+  border-radius: 0.625rem;
+  overflow: hidden;
+  animation: chipin 0.13s ease;
+}
+
+@keyframes chipin {
+  from {
+    opacity: 0.3;
+    transform: translateY(-2px);
+  }
+}
+
+.pane.is-active .chip {
+  border-color: var(--accent);
+}
+
+.chip.is-dir .ficon {
+  color: var(--folder);
+}
+
+.chip.is-link .ficon {
+  color: var(--link);
+}
+
+.chthumb {
+  width: 4.75rem;
+  height: 4.75rem;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  color: var(--text-faint);
+}
+
+.chthumb > .ficon {
+  width: 2.75rem;
+  height: 2.75rem;
+}
+
+.chthumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.chthumb-grid {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 0.4375rem;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 0.25rem;
+}
+
+.chgrid-ic {
+  width: 100%;
+  height: 100%;
+}
+
+.chbody {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chtitle {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chsub {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.125rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.opens {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  padding: 0.0625rem 0.5rem;
+  background: var(--panel);
+  border: 0.5px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+}
+
+.opensic {
+  width: 0.875rem;
+  height: 0.875rem;
+  flex: none;
+  display: flex;
+}
+
+.opensic img {
+  width: 100%;
+  height: 100%;
+}
+
+.chtiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.375rem;
+  margin-top: 0.5rem;
+}
+
+.chtile {
+  min-width: 0;
+  padding: 0.3125rem 0.5rem;
+  background: var(--panel);
+  border-radius: 0.4375rem;
+}
+
+.chtile-l {
+  font-size: 0.625rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.chtile-v {
+  font-size: 0.75rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chpeek {
+  margin-top: 0.375rem;
+  font-size: 0.6875rem;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---------- locations popover ---------- */
 .locpop {
   position: absolute;

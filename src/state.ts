@@ -16,6 +16,7 @@ export const state = {
     defaultZoom: 100,
     lowercaseTabs: false,
     systemIcons: false,
+    chipCards: false,
   } as Settings,
   // Global "Finder sidebar" locations, shared across panes/tabs.
   locations: [] as Location[],

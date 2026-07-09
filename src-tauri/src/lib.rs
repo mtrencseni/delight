@@ -1,4 +1,5 @@
 mod actions;
+mod details;
 mod fs_cmds;
 mod icons;
 mod menu;
@@ -11,6 +12,8 @@ pub fn run() {
             fs_cmds::list_dir,
             fs_cmds::home_dir,
             icons::file_icon,
+            details::item_details,
+            details::file_thumbnail,
             actions::open_path,
             actions::quicklook,
             actions::quicklook_close,

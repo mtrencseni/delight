@@ -22,7 +22,7 @@ pub async fn file_icon(
         .map_err(|e| e.to_string())
 }
 
-fn to_data_uri(png: &[u8]) -> String {
+pub(crate) fn to_data_uri(png: &[u8]) -> String {
     let b64 = base64::engine::general_purpose::STANDARD.encode(png);
     format!("data:image/png;base64,{b64}")
 }

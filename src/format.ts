@@ -23,6 +23,23 @@ export function fmtDate(ms: number | null): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${time}`;
 }
 
+/** Compact date for the narrow chip tiles: "Today", "Yesterday", "May 30",
+    or "May 30, 2026" when the year differs from now. */
+export function fmtDateCompact(ms: number | null): string {
+  if (ms == null) return "—";
+  const d = new Date(ms);
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const DAY = 86400000;
+  if (ms >= startOfToday && ms < startOfToday + DAY) return "Today";
+  if (ms >= startOfToday - DAY && ms < startOfToday) return "Yesterday";
+  const opts: Intl.DateTimeFormatOptions =
+    d.getFullYear() === now.getFullYear()
+      ? { month: "short", day: "numeric" }
+      : { month: "short", day: "numeric", year: "numeric" };
+  return d.toLocaleDateString(undefined, opts);
+}
+
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
