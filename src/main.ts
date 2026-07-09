@@ -29,6 +29,7 @@ class App {
   contentEl = el("div", "content");
   eyeBtn = el("button", "tbtn");
   themeBtn = el("button", "tbtn");
+  devBtn = el("button", "tbtn");
   views = new Map<number, TabView>();
   private previewPane: PaneView | null = null;
 
@@ -150,17 +151,22 @@ class App {
     // Keep the icon in sync when the OS appearance flips while in System mode.
     onThemeChange(() => this.syncThemeBtn());
 
+    this.devBtn.innerHTML = icons.code;
+    this.devBtn.title = "Developer tools (⌥⌘I)";
+    this.devBtn.addEventListener("click", () => void invoke("toggle_devtools").catch(() => {}));
+
     const gearBtn = el("button", "tbtn");
     gearBtn.innerHTML = icons.gear;
     gearBtn.title = "Settings (⌘,)";
     gearBtn.addEventListener("click", () => this.addSettingsTab(true));
 
     const spacer = el("div", "flexspace");
-    // Layout: [files tabs][+] …spacer… [system tabs][theme][eye][gear]
-    tabbar.append(this.tabsEl, newBtn, spacer, this.sysTabsEl, this.themeBtn, this.eyeBtn, gearBtn);
+    // Layout: [files tabs][+] …spacer… [system tabs][theme][eye][dev][gear]
+    tabbar.append(this.tabsEl, newBtn, spacer, this.sysTabsEl, this.themeBtn, this.eyeBtn, this.devBtn, gearBtn);
     root.append(tabbar, this.contentEl);
     this.syncEye();
     this.syncThemeBtn();
+    this.syncDevBtn();
     // Re-fit tab titles whenever the available width changes.
     new ResizeObserver(() => this.fitTabTitles()).observe(tabbar);
     window.addEventListener("resize", () => this.fitTabTitles());
@@ -313,6 +319,7 @@ class App {
       },
       onDevTools: (v) => {
         state.settings.devTools = v;
+        this.syncDevBtn();
         // Turning it off closes the inspector if it's currently open.
         if (!v) void invoke("close_devtools").catch(() => {});
         persist();
@@ -573,6 +580,11 @@ class App {
     // Show where a click takes you: sun to go light, moon to go dark.
     this.themeBtn.innerHTML = dark ? icons.sun : icons.moon;
     this.themeBtn.title = dark ? "Switch to light theme" : "Switch to dark theme";
+  }
+
+  /** The dev-tools button only exists when the setting is enabled. */
+  private syncDevBtn(): void {
+    this.devBtn.hidden = !state.settings.devTools;
   }
 
   // ---- zoom ------------------------------------------------------------------
