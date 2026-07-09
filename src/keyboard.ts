@@ -20,6 +20,8 @@ export interface Actions {
   collapse(): void;
   /** Space: Quick Look preview of the cursor item. */
   preview(): void;
+  /** ⌥⌘I: toggle the Web Inspector (no-op unless enabled in settings). */
+  devtools(): void;
 }
 
 export function initKeyboard(a: Actions): void {
@@ -27,6 +29,13 @@ export function initKeyboard(a: Actions): void {
     const t = e.target as HTMLElement | null;
     const typing =
       !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+
+    // ⌥⌘I toggles the Web Inspector (gated by the setting in the handler).
+    if (e.metaKey && e.altKey && !e.ctrlKey && e.code === "KeyI") {
+      e.preventDefault();
+      a.devtools();
+      return;
+    }
 
     if (e.metaKey && !e.ctrlKey && !e.altKey) {
       switch (e.code) {

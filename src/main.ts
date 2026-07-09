@@ -110,6 +110,9 @@ class App {
         this.previewPane = p;
         p.previewCursor();
       },
+      devtools: () => {
+        if (state.settings.devTools) void invoke("toggle_devtools").catch(() => {});
+      },
     });
 
     // Quick Look reports its current item as the user arrows; follow it.
@@ -125,6 +128,7 @@ class App {
       if (typeof s.lowercaseTabs === "boolean") state.settings.lowercaseTabs = s.lowercaseTabs;
       if (typeof s.systemIcons === "boolean") state.settings.systemIcons = s.systemIcons;
       if (typeof s.chipCards === "boolean") state.settings.chipCards = s.chipCards;
+      if (typeof s.devTools === "boolean") state.settings.devTools = s.devTools;
     }
     state.zoom = ZOOM_LEVELS.includes(saved?.zoom) ? saved.zoom : state.settings.defaultZoom;
   }
@@ -305,6 +309,12 @@ class App {
       onChipCards: (v) => {
         state.settings.chipCards = v;
         for (const view of this.views.values()) view.panes?.forEach((p) => p.refreshView());
+        persist();
+      },
+      onDevTools: (v) => {
+        state.settings.devTools = v;
+        // Turning it off closes the inspector if it's currently open.
+        if (!v) void invoke("close_devtools").catch(() => {});
         persist();
       },
     });

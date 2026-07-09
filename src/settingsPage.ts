@@ -10,6 +10,7 @@ export interface SettingsHooks {
   onLowercaseTabs(v: boolean): void;
   onSystemIcons(v: boolean): void;
   onChipCards(v: boolean): void;
+  onDevTools(v: boolean): void;
 }
 
 export interface SettingsPage {
@@ -78,6 +79,7 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
   const lowerSw = makeSwitch(() => hooks.get().lowercaseTabs, hooks.onLowercaseTabs);
   const sysIconSw = makeSwitch(() => hooks.get().systemIcons, hooks.onSystemIcons);
   const chipCardsSw = makeSwitch(() => hooks.get().chipCards, hooks.onChipCards);
+  const devToolsSw = makeSwitch(() => hooks.get().devTools, hooks.onDevTools);
 
   // Default zoom stepper
   const stepper = el("div", "stepper");
@@ -122,6 +124,11 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     row("Card rows", "Show every row as a card instead of a compact accordion", chipCardsSw)
   );
 
+  section(
+    "Advanced",
+    row("Enable developer tools", "Toggle the Web Inspector with ⌥⌘I", devToolsSw)
+  );
+
   const setSwitch = (s: HTMLElement, on: boolean) => {
     s.classList.toggle("on", on);
     s.setAttribute("aria-checked", String(on));
@@ -134,6 +141,7 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     setSwitch(lowerSw, s.lowercaseTabs);
     setSwitch(sysIconSw, s.systemIcons);
     setSwitch(chipCardsSw, s.chipCards);
+    setSwitch(devToolsSw, s.devTools);
     val.textContent = `${s.defaultZoom}%`;
   }
   sync();

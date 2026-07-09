@@ -166,6 +166,8 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
       console.log("[mock] quicklook idx", args?.index, (args?.items as any[])?.map((i) => i.name));
       return undefined as T;
     case "quicklook_close":
+    case "toggle_devtools":
+    case "close_devtools":
       return undefined as T;
     case "item_details": {
       const dir = String(args?.dir ?? "");

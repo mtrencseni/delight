@@ -17,6 +17,7 @@ export const state = {
     lowercaseTabs: false,
     systemIcons: false,
     chipCards: false,
+    devTools: false,
   } as Settings,
   // Global "Finder sidebar" locations, shared across panes/tabs.
   locations: [] as Location[],

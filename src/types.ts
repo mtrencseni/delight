@@ -72,6 +72,8 @@ export interface Settings {
   systemIcons: boolean;
   /** In chips view: render every row as a card (vs a compact accordion). */
   chipCards: boolean;
+  /** Enable the Web Inspector (⌥⌘I). */
+  devTools: boolean;
 }
 
 export type TabKind = "files" | "settings";
