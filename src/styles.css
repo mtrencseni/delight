@@ -1,0 +1,981 @@
+/* ---------- font (bundled, never system) ---------- */
+@font-face {
+  font-family: "Inter";
+  src: url("/fonts/InterVariable.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ---------- theme tokens: every color in the app lives here ---------- */
+:root {
+  --font: "Inter", -apple-system, "Segoe UI", sans-serif;
+}
+
+:root[data-theme="light"] {
+  --bg: #eceef2;
+  --header: #dfe2e9; /* tab strip — a touch darker than content */
+  --panel: #ffffff;
+  --panel-alt: #f3f4f7;
+  --text: #1b1f27;
+  --text-dim: #69707d;
+  --text-faint: #9aa1ad;
+  --border: #dcdfe6;
+  --accent: #4f7cf7;
+  --accent-soft: rgba(79, 124, 247, 0.12);
+  --cursor: #dbe6ff;
+  --cursor-inactive: #eaedf3;
+  --hover: rgba(15, 23, 42, 0.05);
+  --error-bg: #fdecec;
+  --error-text: #b3261e;
+  --folder: #47a1f2;
+  --link: #4f9cf7;
+  --scroll: rgba(15, 23, 42, 0.25);
+  --toast-bg: #1b1f27;
+  --toast-text: #ffffff;
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.1);
+  /* filetype icon colors (macOS system palette) */
+  --ft-image: #26a94c;
+  --ft-video: #a44bd3;
+  --ft-audio: #f2385f;
+  --ft-archive: #a2845e;
+  --ft-code: #5e5ce6;
+  --ft-doc: #8e8e93;
+  --ft-pdf: #eb4a3d;
+  --ft-exec: #ec8b1c;
+}
+
+/* Finder-style grays (macOS dark appearance) */
+:root[data-theme="dark"] {
+  --bg: #28282a;
+  --header: #1c1c1e; /* tab strip — darker so the active tab reads as raised */
+  --panel: #212124;
+  --panel-alt: #2c2c2e;
+  --text: #e2e2e5;
+  --text-dim: #98989d;
+  --text-faint: #636369;
+  --border: #3a3a3c;
+  --accent: #0a84ff;
+  --accent-soft: rgba(10, 132, 255, 0.22);
+  --cursor: #0a5dce;
+  --cursor-inactive: #39393d;
+  --hover: rgba(255, 255, 255, 0.05);
+  --error-bg: #3a2226;
+  --error-text: #ff8f88;
+  --folder: #58a6f6;
+  --link: #6db4ff;
+  --scroll: rgba(255, 255, 255, 0.25);
+  --toast-bg: #e6e9ef;
+  --toast-text: #1c1c1e;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --ft-image: #30d158;
+  --ft-video: #bf5af2;
+  --ft-audio: #ff375f;
+  --ft-archive: #ac8e68;
+  --ft-code: #7d7bf5;
+  --ft-doc: #98989d;
+  --ft-pdf: #ff453a;
+  --ft-exec: #ff9f0a;
+}
+
+/* ---------- base ---------- */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px; /* zoom target: main.ts scales this */
+}
+
+body {
+  font-family: var(--font);
+  font-size: 0.8125rem;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+svg {
+  display: block;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ---------- custom scrollbars (never native) ---------- */
+::-webkit-scrollbar {
+  width: 0.5rem;
+  height: 0.5rem;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scroll);
+  border-radius: 0.25rem;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------- tab bar ---------- */
+.tabbar {
+  display: flex;
+  align-items: flex-end; /* tabs seat on the bar's baseline */
+  gap: 0.25rem;
+  padding: 0.5rem 0.5rem 0;
+  min-height: 2.375rem;
+  background: var(--header); /* distinct strip; active tab flows into content */
+}
+
+.tabs,
+.systabs {
+  display: flex;
+  gap: 0.125rem;
+  min-width: 0;
+}
+
+/* Padding + equal negative margin gives the active tab's flared feet room to
+   render past the edge tabs without shifting layout or being clipped. */
+.tabs {
+  overflow: hidden;
+  padding: 0 0.5rem;
+  margin: 0 -0.5rem;
+}
+
+.tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.3125rem;
+  padding: 0.375rem 0.4375rem 0.375rem 0.75rem;
+  border-radius: 0.55rem 0.55rem 0 0; /* chrome: round the top only */
+  color: var(--text-dim);
+  cursor: default;
+  min-width: 0;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.tab:hover:not(.active) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* Active tab matches the content area it opens into and flares into the bar. */
+.tab.active {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.tab.active::before,
+.tab.active::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: 0.55rem;
+  height: 0.55rem;
+  background: var(--bg);
+  pointer-events: none;
+}
+
+.tab.active::before {
+  left: -0.55rem;
+  -webkit-mask: radial-gradient(circle at top left, #0000 0.55rem, #000 calc(0.55rem + 0.5px));
+  mask: radial-gradient(circle at top left, #0000 0.55rem, #000 calc(0.55rem + 0.5px));
+}
+
+.tab.active::after {
+  right: -0.55rem;
+  -webkit-mask: radial-gradient(circle at top right, #0000 0.55rem, #000 calc(0.55rem + 0.5px));
+  mask: radial-gradient(circle at top right, #0000 0.55rem, #000 calc(0.55rem + 0.5px));
+}
+
+.tab.dragging {
+  z-index: 5;
+  background: var(--bg);
+  box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.35);
+  cursor: grabbing;
+}
+
+body.tab-dragging,
+body.tab-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.tabtitle {
+  /* JS sizes this to fit: up to 13.5rem (1.5x) when there's room, shrinking
+     toward ellipsis when the strip gets crowded. */
+  max-width: var(--tab-title-max, 13.5rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 550;
+}
+
+.tabclose {
+  width: 1rem;
+  height: 1rem;
+  padding: 0.1875rem;
+  border-radius: 0.25rem;
+  opacity: 0;
+  color: var(--text-dim);
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+
+.tab:hover .tabclose,
+.tab.active .tabclose {
+  opacity: 0.75;
+}
+
+.tabclose:hover {
+  background: var(--hover);
+  opacity: 1;
+}
+
+.tbtn {
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0.375rem;
+  border-radius: 0.4375rem;
+  color: var(--text-dim);
+  transition: background 0.12s ease, color 0.12s ease;
+  flex: none;
+}
+
+.tbtn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.tbtn.on {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.flexspace {
+  flex: 1;
+}
+
+/* ---------- content / tab views ---------- */
+.content {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  padding: 0.5rem;
+}
+
+.tabview {
+  flex: 1;
+  display: none;
+  min-width: 0;
+  min-height: 0;
+}
+
+.tabview.active {
+  display: flex;
+}
+
+.dual {
+  flex: 1;
+  display: flex;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+/* ---------- pane ---------- */
+.pane {
+  position: relative; /* anchor for the locations popover */
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  transition: border-color 0.12s ease;
+}
+
+.pane.is-active {
+  border-color: var(--accent);
+}
+
+.pathbar {
+  display: flex;
+  align-items: center;
+  gap: 0.3125rem;
+  padding: 0.375rem 0.375rem 0;
+}
+
+.pbtn {
+  width: 1.625rem;
+  height: 1.625rem;
+  padding: 0.3125rem;
+  flex: none;
+  border-radius: 0.375rem;
+  color: var(--text-dim);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.pbtn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.pbtn.on {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.pathinput {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-alt);
+  border: 1px solid transparent;
+  border-radius: 0.375rem;
+  padding: 0.3125rem 0.5rem;
+  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.pane.is-active .pathinput {
+  background: var(--accent-soft);
+}
+
+.pathinput:focus {
+  border-color: var(--accent);
+  background: var(--panel);
+}
+
+.pane-error {
+  margin: 0.375rem 0.375rem 0;
+  padding: 0.3125rem 0.5rem;
+  background: var(--error-bg);
+  color: var(--error-text);
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+}
+
+.pane-error.hidden {
+  display: none;
+}
+
+/* ---------- listing ---------- */
+.listhead,
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--w-ext, 3.25rem) var(--w-size, 5.25rem) var(--w-mod, 8.5rem);
+  align-items: center;
+}
+
+.listhead {
+  margin-top: 0.375rem;
+  padding: 0 0.875rem 0 0.375rem; /* right inset matches scrollbar width */
+  border-bottom: 1px solid var(--border);
+}
+
+.headcell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.1875rem;
+  padding: 0.3125rem 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.12s ease;
+}
+
+.colgrip {
+  position: absolute;
+  left: -0.25rem;
+  top: 0;
+  bottom: 0;
+  width: 0.5rem;
+  cursor: col-resize;
+}
+
+.colgrip::after {
+  content: "";
+  position: absolute;
+  left: calc(50% - 0.5px);
+  top: 20%;
+  bottom: 20%;
+  width: 1px;
+  background: var(--border);
+  transition: background 0.12s ease, width 0.12s ease;
+}
+
+.colgrip:hover::after,
+body.col-resizing .colgrip::after {
+  background: var(--accent);
+  width: 2px;
+}
+
+body.col-resizing,
+body.col-resizing * {
+  cursor: col-resize !important;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.headcell:hover,
+.headcell.sorted {
+  color: var(--text);
+}
+
+.headcell.col-size,
+.headcell.col-mod {
+  justify-content: flex-end;
+}
+
+.sortmark {
+  width: 0.625rem;
+  height: 0.625rem;
+  color: var(--accent);
+  flex: none;
+}
+
+.sortmark:empty {
+  display: none;
+}
+
+.rows {
+  position: relative;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.vspacer {
+  width: 1px;
+}
+
+.row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1.75rem;
+  padding: 0 0.375rem;
+  cursor: default;
+}
+
+.row:hover {
+  background: var(--hover);
+}
+
+.row.is-cursor {
+  background: var(--cursor-inactive);
+}
+
+.pane.is-active .row.is-cursor {
+  background: var(--cursor);
+}
+
+.row.is-hidden {
+  opacity: 0.55;
+}
+
+.cell {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding: 0 0.25rem;
+}
+
+.col-name {
+  display: flex;
+  align-items: center;
+  gap: 0.3125rem;
+  min-width: 0;
+}
+
+/* Finder-style disclosure triangle (dirs only; files get a blank spacer) */
+.disclose {
+  width: 0.875rem;
+  height: 0.875rem;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.1875rem;
+  color: var(--text-dim);
+}
+
+.disclose svg {
+  width: 0.625rem;
+  height: 0.625rem;
+  visibility: hidden;
+  transition: transform 0.12s ease;
+}
+
+.disclose.can svg {
+  visibility: visible;
+}
+
+.disclose.can:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.disclose.open svg {
+  transform: rotate(90deg);
+}
+
+.fname {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.col-ext,
+.col-size,
+.col-mod {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.75rem;
+}
+
+.col-size,
+.col-mod {
+  text-align: right;
+}
+
+.ficon {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+  color: var(--text-faint);
+}
+
+.row.is-dir .ficon {
+  color: var(--folder);
+}
+
+.row.is-link .ficon {
+  color: var(--link);
+}
+
+/* System (OS) icons render as a full-color raster inside the icon box. */
+.ficon.sys {
+  color: inherit;
+}
+
+.ficon.sys img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.ficon.type-image { color: var(--ft-image); }
+.ficon.type-video { color: var(--ft-video); }
+.ficon.type-audio { color: var(--ft-audio); }
+.ficon.type-archive { color: var(--ft-archive); }
+.ficon.type-code { color: var(--ft-code); }
+.ficon.type-doc { color: var(--ft-doc); }
+.ficon.type-pdf { color: var(--ft-pdf); }
+.ficon.type-exec { color: var(--ft-exec); }
+
+/* Finder-style (dark): focused selection is a solid blue bar with light text.
+   In light theme the cursor stays a pale wash, so normal colors remain. */
+:root[data-theme="dark"] .pane.is-active .row.is-cursor,
+:root[data-theme="dark"] .pane.is-active .row.is-cursor .col-ext,
+:root[data-theme="dark"] .pane.is-active .row.is-cursor .col-size,
+:root[data-theme="dark"] .pane.is-active .row.is-cursor .col-mod,
+:root[data-theme="dark"] .pane.is-active .row.is-cursor .ficon,
+:root[data-theme="dark"] .pane.is-active .row.is-cursor .disclose {
+  color: #ffffff;
+}
+
+.emptymsg {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+}
+
+.panestatus {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.1875rem 0.625rem;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 0.6875rem;
+  min-height: 1.375rem;
+}
+
+/* ---------- grid (icon) view ---------- */
+.pane.grid .listhead {
+  display: none;
+}
+
+.pane:not(.grid) .gridsize {
+  display: none;
+}
+
+.gridsize {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 6rem;
+  height: 0.25rem;
+  flex: none;
+  background: var(--border);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.gridsize::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.tile {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.375rem 0.25rem;
+  border-radius: 0.5rem;
+  text-align: center;
+  cursor: default;
+}
+
+.tile:hover {
+  background: var(--hover);
+}
+
+.tile.is-cursor {
+  background: var(--cursor-inactive);
+}
+
+.pane.is-active .tile.is-cursor {
+  background: var(--cursor);
+}
+
+.tile.is-hidden {
+  opacity: 0.55;
+}
+
+.gridicon {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.tile.is-dir .gridicon {
+  color: var(--folder);
+}
+
+.tile.is-link .gridicon {
+  color: var(--link);
+}
+
+.tile .fname {
+  font-size: 11px;
+  line-height: 1.25;
+  max-width: 100%;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
+:root[data-theme="dark"] .pane.is-active .tile.is-cursor,
+:root[data-theme="dark"] .pane.is-active .tile.is-cursor .gridicon {
+  color: #ffffff;
+}
+
+/* ---------- locations popover ---------- */
+.locpop {
+  position: absolute;
+  top: 2.5rem;
+  right: 0.5rem;
+  z-index: 20;
+  min-width: 12rem;
+  max-width: 16rem;
+  padding: 0.25rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.3);
+}
+
+.loclist {
+  display: flex;
+  flex-direction: column;
+  max-height: 18rem;
+  overflow-y: auto;
+}
+
+.locitem {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3125rem 0.375rem;
+  border-radius: 0.375rem;
+  cursor: default;
+}
+
+.locitem:hover {
+  background: var(--hover);
+}
+
+.locicon {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+  color: var(--folder);
+}
+
+.locname {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.locrm {
+  width: 1rem;
+  height: 1rem;
+  padding: 0.1875rem;
+  flex: none;
+  border-radius: 0.25rem;
+  color: var(--text-dim);
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+
+.locitem:hover .locrm {
+  opacity: 0.7;
+}
+
+.locrm:hover {
+  background: var(--hover);
+  opacity: 1;
+}
+
+.locadd {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+  padding: 0.4375rem 0.375rem;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.locadd:hover {
+  color: var(--text);
+}
+
+.locadd svg {
+  width: 0.875rem;
+  height: 0.875rem;
+  flex: none;
+}
+
+/* ---------- settings tab ---------- */
+.settings {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+.settings-inner {
+  max-width: 34rem;
+  margin: 0 auto;
+  padding: 2rem 2rem 3rem;
+}
+
+.settings h1 {
+  font-size: 1.25rem;
+  font-weight: 650;
+}
+
+.setsection {
+  margin-top: 1.5rem;
+}
+
+.setsection h2 {
+  font-size: 0.6875rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-bottom: 0.375rem;
+}
+
+.setrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.setrow:last-child {
+  border-bottom: none;
+}
+
+.setname {
+  font-weight: 550;
+}
+
+.sethint {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin-top: 0.125rem;
+}
+
+.seg {
+  display: flex;
+  gap: 0.125rem;
+  background: var(--panel-alt);
+  border-radius: 0.4375rem;
+  padding: 0.1875rem;
+}
+
+.seg button {
+  padding: 0.25rem 0.75rem;
+  border-radius: 0.3125rem;
+  color: var(--text-dim);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.seg button:hover {
+  color: var(--text);
+}
+
+.seg button.on {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.switch {
+  width: 2.375rem;
+  height: 1.375rem;
+  border-radius: 999px;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  position: relative;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  flex: none;
+}
+
+.switch .knob {
+  position: absolute;
+  top: 0.125rem;
+  left: 0.125rem;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.switch.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.switch.on .knob {
+  transform: translateX(1rem);
+  background: #ffffff;
+}
+
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.stepbtn {
+  width: 1.625rem;
+  height: 1.625rem;
+  padding: 0.375rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.375rem;
+  background: var(--panel-alt);
+  color: var(--text-dim);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.stepbtn:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.stepval {
+  min-width: 3rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-weight: 550;
+}
+
+/* ---------- toast ---------- */
+.toast {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translate(-50%, 0.5rem);
+  background: var(--toast-bg);
+  color: var(--toast-text);
+  padding: 0.375rem 0.875rem;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 550;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  z-index: 10;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
