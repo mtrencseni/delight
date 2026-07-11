@@ -1,5 +1,5 @@
 import type { Settings, Theme } from "./types";
-import { ZOOM_LEVELS } from "./state";
+import { PREVIEW_SIZES, ZOOM_LEVELS } from "./state";
 import { icons } from "./icons";
 
 export interface SettingsHooks {
@@ -10,6 +10,17 @@ export interface SettingsHooks {
   onLowercaseTabs(v: boolean): void;
   onSystemIcons(v: boolean): void;
   onChipCards(v: boolean): void;
+  onHighlightToday(v: boolean): void;
+  onSizeBars(v: boolean): void;
+  onSizeBarLog(v: boolean): void;
+  onPreviewPane(v: boolean): void;
+  onPreviewSize(n: number): void;
+  onShowCreated(v: boolean): void;
+  onShowPermissions(v: boolean): void;
+  onNameCase(c: "original" | "lower" | "upper"): void;
+  onLinkedSort(v: boolean): void;
+  onLinkedColumns(v: boolean): void;
+  onOpenKeybindings(): void;
   onDevTools(v: boolean): void;
 }
 
@@ -64,6 +75,19 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     seg.append(b);
   }
 
+  // Preview resolution segmented control (512 / 1024 / 2048 px).
+  const sizeSeg = el("div", "seg");
+  const sizeBtns = new Map<number, HTMLButtonElement>();
+  for (const px of PREVIEW_SIZES) {
+    const b = el("button", "", String(px));
+    b.addEventListener("click", () => {
+      hooks.onPreviewSize(px);
+      sync();
+    });
+    sizeBtns.set(px, b);
+    sizeSeg.append(b);
+  }
+
   // Toggle switch factory: reads its value and applies a change via callbacks.
   const makeSwitch = (read: () => boolean, write: (v: boolean) => void) => {
     const s = el("button", "switch");
@@ -78,7 +102,32 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
   const hiddenSw = makeSwitch(() => hooks.get().showHidden, hooks.onHidden);
   const lowerSw = makeSwitch(() => hooks.get().lowercaseTabs, hooks.onLowercaseTabs);
   const sysIconSw = makeSwitch(() => hooks.get().systemIcons, hooks.onSystemIcons);
+  const createdColSw = makeSwitch(() => hooks.get().showCreated, hooks.onShowCreated);
+  const permsColSw = makeSwitch(() => hooks.get().showPermissions, hooks.onShowPermissions);
+  const linkedSortSw = makeSwitch(() => hooks.get().linkedSort, hooks.onLinkedSort);
+  const linkedColsSw = makeSwitch(() => hooks.get().linkedColumns, hooks.onLinkedColumns);
+
+  // Item-case segmented control (original / lowercase / uppercase).
+  const caseSeg = el("div", "seg");
+  const caseBtns = new Map<"original" | "lower" | "upper", HTMLButtonElement>();
+  for (const [val, label] of [
+    ["original", "Original"],
+    ["lower", "lowercase"],
+    ["upper", "UPPERCASE"],
+  ] as ["original" | "lower" | "upper", string][]) {
+    const b = el("button", "", label);
+    b.addEventListener("click", () => {
+      hooks.onNameCase(val);
+      sync();
+    });
+    caseBtns.set(val, b);
+    caseSeg.append(b);
+  }
   const chipCardsSw = makeSwitch(() => hooks.get().chipCards, hooks.onChipCards);
+  const todaySw = makeSwitch(() => hooks.get().highlightToday, hooks.onHighlightToday);
+  const sizeBarsSw = makeSwitch(() => hooks.get().sizeBars, hooks.onSizeBars);
+  const sizeBarLogSw = makeSwitch(() => hooks.get().sizeBarLog, hooks.onSizeBarLog);
+  const previewPaneSw = makeSwitch(() => hooks.get().previewPane, hooks.onPreviewPane);
   const devToolsSw = makeSwitch(() => hooks.get().devTools, hooks.onDevTools);
 
   // Default zoom stepper
@@ -116,7 +165,34 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
 
   section(
     "Files",
-    row("System file icons", "Use macOS icons instead of Delight's vector set", sysIconSw)
+    row("System file icons", "Use macOS icons instead of Delight's vector set", sysIconSw),
+    row("Preview in opposite pane", "Space previews the file in the other pane instead of a Quick Look window", previewPaneSw),
+    row("Preview resolution", "Thumbnail size (px) for the opposite-pane preview", sizeSeg),
+    row("Highlight recent files", "Green modified time for today, paler for yesterday", todaySw),
+    row("Size bars", "Proportional data bar behind file sizes", sizeBarsSw),
+    row("Logarithmic size bars", "Log scale with decade gridlines (10 KB, 100 KB, …)", sizeBarLogSw),
+    row("Created column", "Show a Created-time column in list view", createdColSw),
+    row("Permissions column", "Show a Permissions column in list view", permsColSw),
+    row("Item case", "Display all names and extensions in this case", caseSeg)
+  );
+
+  section(
+    "Sorting",
+    row("Link both panes", "Sort both panes in a tab by the same column", linkedSortSw)
+  );
+
+  section(
+    "Columns",
+    row("Link column order", "Share one column order across panes (drag a header to reorder)", linkedColsSw)
+  );
+
+  const kbBtn = el("button", "linkbtn");
+  kbBtn.innerHTML = `${icons.keyboard}<span>Configure shortcuts</span>${icons.chevron}`;
+  kbBtn.addEventListener("click", () => hooks.onOpenKeybindings());
+
+  section(
+    "Keyboard",
+    row("Keyboard shortcuts", "View and customize every key binding", kbBtn)
   );
 
   section(
@@ -137,10 +213,20 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
   function sync(): void {
     const s = hooks.get();
     for (const [t, b] of themeBtns) b.classList.toggle("on", s.theme === t);
+    for (const [px, b] of sizeBtns) b.classList.toggle("on", s.previewSize === px);
     setSwitch(hiddenSw, s.showHidden);
     setSwitch(lowerSw, s.lowercaseTabs);
     setSwitch(sysIconSw, s.systemIcons);
     setSwitch(chipCardsSw, s.chipCards);
+    setSwitch(todaySw, s.highlightToday);
+    setSwitch(sizeBarsSw, s.sizeBars);
+    setSwitch(sizeBarLogSw, s.sizeBarLog);
+    setSwitch(previewPaneSw, s.previewPane);
+    setSwitch(createdColSw, s.showCreated);
+    setSwitch(permsColSw, s.showPermissions);
+    setSwitch(linkedSortSw, s.linkedSort);
+    setSwitch(linkedColsSw, s.linkedColumns);
+    for (const [val, b] of caseBtns) b.classList.toggle("on", s.nameCase === val);
     setSwitch(devToolsSw, s.devTools);
     val.textContent = `${s.defaultZoom}%`;
   }

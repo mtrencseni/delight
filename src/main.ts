@@ -1,19 +1,22 @@
 import "./styles.css";
-import { invoke, onEvent } from "./ipc";
-import { GRID_DEFAULT, GRID_MAX, GRID_MIN, newTabId, persist, state, ZOOM_LEVELS } from "./state";
-import type { PaneState, Tab, Theme } from "./types";
+import { invoke, isTauri, onEvent } from "./ipc";
+import { GRID_DEFAULT, GRID_MAX, GRID_MIN, newTabId, normalizeColumnOrder, persist, PREVIEW_SIZES, state, ZOOM_LEVELS } from "./state";
+import type { PaneState, SortDir, SortKey, Tab, Theme } from "./types";
 import { PaneView } from "./pane";
 import { initKeyboard } from "./keyboard";
+import { COMMANDS, mergeKeybindings, type CommandId } from "./commands";
 import { applyTheme, effectiveTheme, onThemeChange } from "./theme";
 import { toast } from "./toast";
 import { icons } from "./icons";
 import { buildSettingsPage, type SettingsPage } from "./settingsPage";
+import { buildKeybindingsPage, type KeybindingsPage } from "./keybindingsPage";
 import { clamp } from "./format";
 
 interface TabView {
   el: HTMLElement;
   panes: [PaneView, PaneView] | null;
   settings?: SettingsPage;
+  keybindings?: KeybindingsPage;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string): HTMLElementTagNameMap[K] {
@@ -31,7 +34,14 @@ class App {
   themeBtn = el("button", "tbtn");
   devBtn = el("button", "tbtn");
   views = new Map<number, TabView>();
+  /** Native Quick Look: the pane whose cursor the QL panel is following. */
   private previewPane: PaneView | null = null;
+  /** In-pane preview: the browsed (source) pane and the pane showing the preview. */
+  private previewSource: PaneView | null = null;
+  private previewTarget: PaneView | null = null;
+  /** Combo string → command id, rebuilt whenever bindings change. */
+  private comboMap = new Map<string, CommandId>();
+  private commandHandlers: Record<CommandId, () => boolean | void> = {} as any;
 
   async init(): Promise<void> {
     const [saved, home] = await Promise.all([
@@ -40,6 +50,8 @@ class App {
     ]);
     this.home = home;
     this.restoreSettings(saved);
+    state.keybindings = mergeKeybindings(saved?.keybindings);
+    state.columnOrder = normalizeColumnOrder(saved?.columnOrder);
 
     // Restore saved locations; default to just the user's home.
     const savedLocs = Array.isArray(saved?.locations) ? saved.locations : null;
@@ -49,6 +61,18 @@ class App {
         .map((l: any) => ({ path: l.path, name: l.name })) ?? [];
     if (state.locations.length === 0) {
       state.locations = [{ path: home, name: home.split("/").filter(Boolean).pop() || "Home" }];
+    }
+
+    // One-time: seed the user's Dropbox folder as a default favorite if they
+    // have one. Guarded by a flag so a later removal is respected.
+    state.dropboxSeeded = saved?.dropboxSeeded === true;
+    if (!state.dropboxSeeded) {
+      const db = await invoke<string | null>("dropbox_dir").catch(() => null);
+      if (db && !state.locations.some((l) => l.path === db)) {
+        state.locations.push({ path: db, name: "Dropbox" });
+      }
+      state.dropboxSeeded = true;
+      persist();
     }
 
     applyTheme(state.settings.theme);
@@ -63,6 +87,7 @@ class App {
       for (const t of savedTabs) {
         try {
           if (t?.kind === "settings") this.addSettingsTab(false);
+          else if (t?.kind === "keybindings") this.addKeybindingsTab(false);
           else {
             const p0 = t?.panes?.[0] ?? {};
             const p1 = t?.panes?.[1] ?? {};
@@ -87,33 +112,47 @@ class App {
     // bar has real width. (Window resizes are handled by the observer/listener.)
     requestAnimationFrame(() => this.fitTabTitles());
 
-    initKeyboard({
+    this.commandHandlers = {
       newTab: () => void this.newTab(),
       closeTab: () => this.closeTab(state.activeTab),
       nextTab: () => this.cycleTab(1),
       prevTab: () => this.cycleTab(-1),
       openSettings: () => this.addSettingsTab(true),
-      zoomStep: (d) => this.zoomStep(d),
-      zoomReset: () => this.setZoom(state.settings.defaultZoom, true),
-      toggleHidden: () => this.toggleHidden(),
       switchPane: () => this.switchPane(),
-      cursor: (d) => this.activePane()?.moveCursor(d),
-      cursorPage: (d) => this.activePane()?.movePage(d),
+      cursorUp: () => this.activePane()?.moveCursor(-1),
+      cursorDown: () => this.activePane()?.moveCursor(1),
+      expand: () => this.activePane()?.expandCursor(),
+      collapse: () => this.activePane()?.collapseCursor(),
+      pageUp: () => this.activePane()?.movePage(-1),
+      pageDown: () => this.activePane()?.movePage(1),
       cursorHome: () => this.activePane()?.moveHome(),
       cursorEnd: () => this.activePane()?.moveEnd(),
       open: () => this.activePane()?.openCursor(),
       up: () => this.activePane()?.goUp(),
-      expand: () => this.activePane()?.expandCursor(),
-      collapse: () => this.activePane()?.collapseCursor(),
-      preview: () => {
-        const p = this.activePane();
-        if (!p) return;
-        this.previewPane = p;
-        p.previewCursor();
-      },
+      selectUp: () => this.activePane()?.extendCursor(-1),
+      selectDown: () => this.activePane()?.extendCursor(1),
+      selectAll: () => this.activePane()?.selectAll(),
+      sortName: () => this.activePane()?.cycleSort("name"),
+      sortExt: () => this.activePane()?.cycleSort("ext"),
+      sortSize: () => this.activePane()?.cycleSort("size"),
+      sortCreated: () => this.activePane()?.cycleSort("created"),
+      sortModified: () => this.activePane()?.cycleSort("modified"),
+      zoomIn: () => this.zoomStep(1),
+      zoomOut: () => this.zoomStep(-1),
+      zoomReset: () => this.setZoom(state.settings.defaultZoom, true),
+      toggleHidden: () => this.toggleHidden(),
+      preview: () => this.doPreview(),
+      closePreview: () => this.closePanePreview(),
       devtools: () => {
         if (state.settings.devTools) void invoke("toggle_devtools").catch(() => {});
       },
+      favoritesLeft: () => this.openFavorites(0),
+      favoritesRight: () => this.openFavorites(1),
+    };
+    this.rebuildComboMap();
+    initKeyboard({
+      lookup: () => this.comboMap,
+      run: (id) => this.commandHandlers[id]?.(),
     });
 
     // Quick Look reports its current item as the user arrows; follow it.
@@ -129,6 +168,16 @@ class App {
       if (typeof s.lowercaseTabs === "boolean") state.settings.lowercaseTabs = s.lowercaseTabs;
       if (typeof s.systemIcons === "boolean") state.settings.systemIcons = s.systemIcons;
       if (typeof s.chipCards === "boolean") state.settings.chipCards = s.chipCards;
+      if (typeof s.highlightToday === "boolean") state.settings.highlightToday = s.highlightToday;
+      if (typeof s.sizeBars === "boolean") state.settings.sizeBars = s.sizeBars;
+      if (typeof s.sizeBarLog === "boolean") state.settings.sizeBarLog = s.sizeBarLog;
+      if (typeof s.previewPane === "boolean") state.settings.previewPane = s.previewPane;
+      if (PREVIEW_SIZES.includes(s.previewSize)) state.settings.previewSize = s.previewSize;
+      if (typeof s.showCreated === "boolean") state.settings.showCreated = s.showCreated;
+      if (typeof s.showPermissions === "boolean") state.settings.showPermissions = s.showPermissions;
+      if (["original", "lower", "upper"].includes(s.nameCase)) state.settings.nameCase = s.nameCase;
+      if (typeof s.linkedSort === "boolean") state.settings.linkedSort = s.linkedSort;
+      if (typeof s.linkedColumns === "boolean") state.settings.linkedColumns = s.linkedColumns;
       if (typeof s.devTools === "boolean") state.settings.devTools = s.devTools;
     }
     state.zoom = ZOOM_LEVELS.includes(saved?.zoom) ? saved.zoom : state.settings.defaultZoom;
@@ -136,7 +185,12 @@ class App {
 
   private buildShell(): void {
     const root = document.getElementById("app")!;
+    // Native window: the tab bar doubles as the OS title bar (traffic lights
+    // overlaid top-left). The class enables the left inset; the browser
+    // preview stays a normal full-width bar.
+    if (isTauri) document.documentElement.classList.add("native");
     const tabbar = el("div", "tabbar");
+    tabbar.setAttribute("data-tauri-drag-region", "");
 
     const newBtn = el("button", "tbtn");
     newBtn.innerHTML = icons.plus;
@@ -161,6 +215,7 @@ class App {
     gearBtn.addEventListener("click", () => this.addSettingsTab(true));
 
     const spacer = el("div", "flexspace");
+    spacer.setAttribute("data-tauri-drag-region", ""); // main window-drag zone
     // Layout: [files tabs][+] …spacer… [system tabs][theme][eye][dev][gear]
     tabbar.append(this.tabsEl, newBtn, spacer, this.sysTabsEl, this.themeBtn, this.eyeBtn, this.devBtn, gearBtn);
     root.append(tabbar, this.contentEl);
@@ -208,14 +263,30 @@ class App {
   // ---- tabs ----------------------------------------------------------------
 
   private paneHost(tab: Tab, index: 0 | 1) {
+    const pane = () => this.views.get(tab.id)?.panes?.[index] ?? null;
     return {
       activate: () => {
+        // Clicking the pane that's showing a preview dismisses it and browses.
+        if (this.previewTarget && pane() === this.previewTarget) this.closePanePreview();
         tab.activePane = index;
         this.syncPaneActive(tab);
       },
       changed: () => {
+        // Navigating/sorting the browsed pane invalidates an open preview.
+        if (this.previewSource && pane() === this.previewSource) this.closePanePreview();
         this.renderTabstrip();
         persist();
+      },
+      cursorMoved: () => {
+        if (this.previewTarget && pane() === this.previewSource) this.refreshPanePreview();
+      },
+      sortChanged: (key: SortKey, dir: SortDir) => {
+        if (!state.settings.linkedSort) return;
+        const panes = this.views.get(tab.id)?.panes;
+        panes?.[index === 0 ? 1 : 0]?.applySort(key, dir);
+      },
+      columnsChanged: () => {
+        for (const view of this.views.values()) view.panes?.forEach((p) => p.refreshColumns());
       },
       showHidden: () => state.settings.showHidden,
       sysIcons: () => state.settings.systemIcons,
@@ -232,6 +303,13 @@ class App {
           state.locations.splice(i, 1);
           persist();
         }
+      },
+      moveLocation: (from: number, to: number) => {
+        const arr = state.locations;
+        if (from < 0 || from >= arr.length || to < 0 || to >= arr.length || from === to) return;
+        const [item] = arr.splice(from, 1);
+        arr.splice(to, 0, item);
+        persist();
       },
     };
   }
@@ -252,10 +330,13 @@ class App {
       colWidths: {
         ext: num(r?.colWidths?.ext, 3.25),
         size: num(r?.colWidths?.size, 5.25),
+        created: num(r?.colWidths?.created, 8.5),
+        perms: num(r?.colWidths?.perms, 6),
         mod: num(r?.colWidths?.mod, 8.5),
       },
       viewMode: r?.viewMode === "grid" ? "grid" : "list",
       gridSize: clamp(num(r?.gridSize, GRID_DEFAULT), GRID_MIN, GRID_MAX),
+      colOrder: Array.isArray(r?.colOrder) ? normalizeColumnOrder(r.colOrder) : undefined,
     });
     const tab: Tab = {
       id: newTabId(),
@@ -317,6 +398,62 @@ class App {
         for (const view of this.views.values()) view.panes?.forEach((p) => p.refreshView());
         persist();
       },
+      onHighlightToday: (v) => {
+        state.settings.highlightToday = v;
+        for (const view of this.views.values()) view.panes?.forEach((p) => p.renderRows());
+        persist();
+      },
+      onSizeBars: (v) => {
+        state.settings.sizeBars = v;
+        for (const view of this.views.values()) view.panes?.forEach((p) => p.refreshView());
+        persist();
+      },
+      onSizeBarLog: (v) => {
+        state.settings.sizeBarLog = v;
+        for (const view of this.views.values()) view.panes?.forEach((p) => p.refreshView());
+        persist();
+      },
+      onPreviewPane: (v) => {
+        state.settings.previewPane = v;
+        if (!v) this.closePanePreview(); // leaving in-pane mode drops any open preview
+        persist();
+      },
+      onPreviewSize: (n) => {
+        state.settings.previewSize = n;
+        persist();
+      },
+      onShowCreated: (v) => {
+        state.settings.showCreated = v;
+        for (const view of this.views.values()) view.panes?.forEach((p) => p.refreshColumns());
+        persist();
+      },
+      onShowPermissions: (v) => {
+        state.settings.showPermissions = v;
+        for (const view of this.views.values()) view.panes?.forEach((p) => p.refreshColumns());
+        persist();
+      },
+      onNameCase: (c) => {
+        state.settings.nameCase = c;
+        for (const view of this.views.values()) view.panes?.forEach((p) => p.renderRows());
+        persist();
+      },
+      onLinkedSort: (v) => {
+        state.settings.linkedSort = v;
+        if (v) {
+          // Adopt the left pane's sort in the right pane of every tab.
+          for (const view of this.views.values()) {
+            const [a, b] = view.panes ?? [];
+            if (a && b) b.applySort(a.st.sortKey, a.st.sortDir);
+          }
+        }
+        persist();
+      },
+      onLinkedColumns: (v) => {
+        state.settings.linkedColumns = v;
+        // Switching to shared adopts the current global order everywhere.
+        for (const view of this.views.values()) view.panes?.forEach((p) => p.refreshColumns());
+        persist();
+      },
       onDevTools: (v) => {
         state.settings.devTools = v;
         this.syncDevBtn();
@@ -324,13 +461,58 @@ class App {
         if (!v) void invoke("close_devtools").catch(() => {});
         persist();
       },
+      onOpenKeybindings: () => this.addKeybindingsTab(true),
     });
     wrap.append(page.el);
     this.contentEl.append(wrap);
     state.tabs.push(tab);
     this.views.set(tab.id, { el: wrap, panes: null, settings: page });
+    // Build the strip first so the new tab's element exists, then activate
+    // (activateTab only toggles classes, it doesn't rebuild the strip).
+    this.renderTabstrip();
     if (activate) this.activateTab(state.tabs.length - 1);
-    else this.renderTabstrip();
+    persist();
+  }
+
+  private addKeybindingsTab(activate: boolean): void {
+    const existing = state.tabs.findIndex((t) => t.kind === "keybindings");
+    if (existing >= 0) {
+      if (activate) this.activateTab(existing);
+      return;
+    }
+    const tab: Tab = { id: newTabId(), kind: "keybindings", activePane: 0, panes: null };
+    const wrap = el("div", "tabview");
+    const page = buildKeybindingsPage({
+      get: () => state.keybindings,
+      add: (id, combo) => {
+        // A combo binds to exactly one command — steal it from any current owner.
+        const prev = this.comboMap.get(combo);
+        for (const cid of Object.keys(state.keybindings) as CommandId[]) {
+          state.keybindings[cid] = state.keybindings[cid].filter((c) => c !== combo);
+        }
+        if (!state.keybindings[id].includes(combo)) state.keybindings[id].push(combo);
+        if (prev && prev !== id) {
+          const label = COMMANDS.find((c) => c.id === prev)?.label ?? prev;
+          toast(`Reassigned from “${label}”`);
+        }
+        this.afterBindingsChanged();
+      },
+      remove: (id, combo) => {
+        state.keybindings[id] = (state.keybindings[id] ?? []).filter((c) => c !== combo);
+        this.afterBindingsChanged();
+      },
+      owner: (combo) => this.comboMap.get(combo) ?? null,
+      reset: () => {
+        state.keybindings = mergeKeybindings(null); // null → pure defaults
+        this.afterBindingsChanged();
+      },
+    });
+    wrap.append(page.el);
+    this.contentEl.append(wrap);
+    state.tabs.push(tab);
+    this.views.set(tab.id, { el: wrap, panes: null, keybindings: page });
+    this.renderTabstrip();
+    if (activate) this.activateTab(state.tabs.length - 1);
     persist();
   }
 
@@ -374,6 +556,7 @@ class App {
   }
 
   activateTab(i: number): void {
+    this.closePanePreview(); // a preview belongs to the tab it was opened in
     state.activeTab = clamp(i, 0, state.tabs.length - 1);
     this.applyActiveTab();
     this.syncActiveTabClass();
@@ -386,6 +569,7 @@ class App {
       const v = this.views.get(t.id);
       v?.el.classList.toggle("active", j === state.activeTab);
       if (j === state.activeTab && t.kind === "settings") v?.settings?.sync();
+      if (j === state.activeTab && t.kind === "keybindings") v?.keybindings?.sync();
     });
   }
 
@@ -396,6 +580,7 @@ class App {
 
   private tabTitle(tab: Tab): string {
     if (tab.kind === "settings") return "Settings";
+    if (tab.kind === "keybindings") return "Shortcuts";
     const name = (p: PaneState) => p.listing?.name || p.path || "—";
     const title = `${name(tab.panes![0])} - ${name(tab.panes![1])}`;
     return state.settings.lowercaseTabs ? title.toLowerCase() : title;
@@ -538,10 +723,80 @@ class App {
   switchPane(): boolean {
     const tab = state.tabs[state.activeTab];
     if (!tab?.panes) return false;
+    this.closePanePreview(); // the opposite pane is about to become active
     tab.activePane = tab.activePane === 0 ? 1 : 0;
     this.syncPaneActive(tab);
     this.renderTabstrip();
     return true;
+  }
+
+  // ---- opposite-pane preview -------------------------------------------------
+
+  /** Space with previewPane on: toggle a live preview of the browsed pane's
+      cursor item in the opposite pane. Arrow keys then follow (cursorMoved). */
+  private togglePanePreview(source: PaneView): void {
+    if (this.previewTarget) {
+      this.closePanePreview();
+      return;
+    }
+    const tab = state.tabs[state.activeTab];
+    const panes = tab?.panes ? this.views.get(tab.id)?.panes : null;
+    if (!panes) return;
+    const target = panes[0] === source ? panes[1] : panes[0];
+    const cur = source.currentEntry();
+    if (!cur) return;
+    this.previewSource = source;
+    this.previewTarget = target;
+    target.showPreview(cur.entry, cur.dirPath);
+  }
+
+  private refreshPanePreview(): void {
+    const cur = this.previewSource?.currentEntry();
+    if (cur) this.previewTarget?.showPreview(cur.entry, cur.dirPath);
+  }
+
+  private closePanePreview(): void {
+    this.previewTarget?.hidePreview();
+    this.previewSource = null;
+    this.previewTarget = null;
+  }
+
+  private doPreview(): void {
+    const p = this.activePane();
+    if (!p) return;
+    if (state.settings.previewPane) {
+      this.togglePanePreview(p);
+    } else {
+      this.previewPane = p;
+      p.previewCursor();
+    }
+  }
+
+  /** ⌘1 / ⌘2: open the left/right pane's Favorites dropdown. */
+  private openFavorites(index: 0 | 1): boolean {
+    const tab = state.tabs[state.activeTab];
+    if (!tab?.panes) return false;
+    const p = this.views.get(tab.id)?.panes?.[index];
+    if (!p) return false;
+    p.openFavorites();
+    return true;
+  }
+
+  // ---- keyboard bindings -----------------------------------------------------
+
+  private rebuildComboMap(): void {
+    const m = new Map<string, CommandId>();
+    for (const cmd of COMMANDS) {
+      for (const combo of state.keybindings[cmd.id] ?? []) m.set(combo, cmd.id);
+    }
+    this.comboMap = m;
+  }
+
+  /** Persist + re-index + refresh the Shortcuts tab after any binding edit. */
+  private afterBindingsChanged(): void {
+    this.rebuildComboMap();
+    for (const v of this.views.values()) v.keybindings?.sync();
+    persist();
   }
 
   // ---- hidden files ----------------------------------------------------------

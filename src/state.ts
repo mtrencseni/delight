@@ -1,7 +1,8 @@
 import { invoke } from "./ipc";
-import type { Location, Settings, Tab } from "./types";
+import { COL_KEYS, type ColKey, type Location, type Settings, type Tab } from "./types";
 
 export const ZOOM_LEVELS = [50, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200];
+export const PREVIEW_SIZES = [512, 1024, 2048];
 export const GRID_MIN = 48;
 export const GRID_MAX = 160;
 export const GRID_DEFAULT = 80;
@@ -17,15 +18,49 @@ export const state = {
     lowercaseTabs: false,
     systemIcons: false,
     chipCards: false,
+    highlightToday: true,
+    sizeBars: true,
+    sizeBarLog: false,
+    previewPane: true,
+    previewSize: 1024,
+    showCreated: false,
+    showPermissions: false,
+    nameCase: "original",
+    linkedSort: true,
+    linkedColumns: true,
     devTools: false,
   } as Settings,
+  // Shared (linked) list-view column order.
+  columnOrder: [...COL_KEYS] as ColKey[],
   // Global "Finder sidebar" locations, shared across panes/tabs.
   locations: [] as Location[],
+  // Effective keyboard bindings: command id -> combo strings. Seeded from
+  // defaults at startup (see main.ts), then user-editable in the Shortcuts tab.
+  keybindings: {} as Record<string, string[]>,
+  // Whether we've already offered the Dropbox folder as a default favorite
+  // (once only, so removing it sticks).
+  dropboxSeeded: false,
 };
 
 let nextId = 1;
 export function newTabId(): number {
   return nextId++;
+}
+
+/** Sanitize a saved column order: keep valid keys in order, append any missing. */
+export function normalizeColumnOrder(saved: unknown): ColKey[] {
+  const seen = new Set<ColKey>();
+  const out: ColKey[] = [];
+  if (Array.isArray(saved)) {
+    for (const k of saved) {
+      if (COL_KEYS.includes(k as ColKey) && !seen.has(k as ColKey)) {
+        seen.add(k as ColKey);
+        out.push(k as ColKey);
+      }
+    }
+  }
+  for (const k of COL_KEYS) if (!seen.has(k)) out.push(k);
+  return out;
 }
 
 let saveTimer: number | undefined;
@@ -39,6 +74,9 @@ export function persist(): void {
       zoom: state.zoom,
       activeTab: state.activeTab,
       locations: state.locations,
+      keybindings: state.keybindings,
+      columnOrder: state.columnOrder,
+      dropboxSeeded: state.dropboxSeeded,
       tabs: state.tabs.map((t) => ({
         kind: t.kind,
         activePane: t.activePane,
@@ -50,6 +88,7 @@ export function persist(): void {
             colWidths: p.colWidths,
             viewMode: p.viewMode,
             gridSize: p.gridSize,
+            colOrder: p.colOrder,
           })) ?? null,
       })),
     };

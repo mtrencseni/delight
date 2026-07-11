@@ -1,103 +1,40 @@
-export interface Actions {
-  newTab(): void;
-  closeTab(): void;
-  nextTab(): void;
-  prevTab(): void;
-  openSettings(): void;
-  zoomStep(d: 1 | -1): void;
-  zoomReset(): void;
-  toggleHidden(): void;
-  /** Returns false when the active tab doesn't do pane switching (settings). */
-  switchPane(): boolean;
-  cursor(d: number): void;
-  cursorPage(d: 1 | -1): void;
-  cursorHome(): void;
-  cursorEnd(): void;
-  open(): void;
-  up(): void;
-  /** Finder-style disclosure: expand/collapse the cursor row's subtree. */
-  expand(): void;
-  collapse(): void;
-  /** Space: Quick Look preview of the cursor item. */
-  preview(): void;
-  /** ⌥⌘I: toggle the Web Inspector (no-op unless enabled in settings). */
-  devtools(): void;
+import { comboFromEvent, comboHasStrongMod, type CommandId } from "./commands";
+
+// While editing a text field, these belong to the field (copy/cut/paste/select/
+// undo/redo) even though they carry a strong modifier — never hijack them.
+const NATIVE_EDIT = new Set([
+  "Meta+KeyC",
+  "Meta+KeyX",
+  "Meta+KeyV",
+  "Meta+KeyA",
+  "Meta+KeyZ",
+  "Meta+Shift+KeyZ",
+]);
+
+export interface KeyboardConfig {
+  /** Current combo → command lookup (rebuilt by the app when bindings change). */
+  lookup(): Map<string, CommandId>;
+  /** Run a command. Return false to let the key event through (no preventDefault). */
+  run(id: CommandId): boolean | void;
 }
 
-export function initKeyboard(a: Actions): void {
+export function initKeyboard(cfg: KeyboardConfig): void {
   window.addEventListener("keydown", (e) => {
     const t = e.target as HTMLElement | null;
     const typing =
       !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
 
-    // ⌥⌘I toggles the Web Inspector (gated by the setting in the handler).
-    if (e.metaKey && e.altKey && !e.ctrlKey && e.code === "KeyI") {
-      e.preventDefault();
-      a.devtools();
-      return;
-    }
+    const combo = comboFromEvent(e);
+    if (!combo) return;
+    const id = cfg.lookup().get(combo);
+    if (!id) return;
 
-    if (e.metaKey && !e.ctrlKey && !e.altKey) {
-      switch (e.code) {
-        case "KeyT":
-          if (!e.shiftKey) { e.preventDefault(); a.newTab(); }
-          return;
-        case "KeyW":
-          if (!e.shiftKey) { e.preventDefault(); a.closeTab(); }
-          return;
-        case "Comma":
-          e.preventDefault(); a.openSettings();
-          return;
-        case "Equal":
-        case "NumpadAdd":
-          e.preventDefault(); a.zoomStep(1);
-          return;
-        case "Minus":
-        case "NumpadSubtract":
-          e.preventDefault(); a.zoomStep(-1);
-          return;
-        case "Digit0":
-        case "Numpad0":
-          e.preventDefault(); a.zoomReset();
-          return;
-        case "Period":
-          if (e.shiftKey) { e.preventDefault(); a.toggleHidden(); }
-          return;
-        case "BracketLeft":
-          if (e.shiftKey) { e.preventDefault(); a.prevTab(); }
-          return;
-        case "BracketRight":
-          if (e.shiftKey) { e.preventDefault(); a.nextTab(); }
-          return;
-      }
-      return;
-    }
+    // In a text field, only fire shortcuts that use a strong modifier — bare
+    // keys (arrows, Space, Enter, Escape…) belong to the field, and so do the
+    // native editing combos (⌘C/X/V/A/Z).
+    if (typing && (!comboHasStrongMod(combo) || NATIVE_EDIT.has(combo))) return;
 
-    if (e.ctrlKey && e.key === "Tab") {
-      e.preventDefault();
-      e.shiftKey ? a.prevTab() : a.nextTab();
-      return;
-    }
-
-    if (e.key === "Tab" && !e.ctrlKey && !e.altKey && !e.shiftKey && !typing) {
-      if (a.switchPane()) e.preventDefault();
-      return;
-    }
-
-    if (typing) return;
-
-    switch (e.key) {
-      case "ArrowUp": e.preventDefault(); a.cursor(-1); return;
-      case "ArrowDown": e.preventDefault(); a.cursor(1); return;
-      case "ArrowRight": e.preventDefault(); a.expand(); return;
-      case "ArrowLeft": e.preventDefault(); a.collapse(); return;
-      case "PageUp": e.preventDefault(); a.cursorPage(-1); return;
-      case "PageDown": e.preventDefault(); a.cursorPage(1); return;
-      case "Home": e.preventDefault(); a.cursorHome(); return;
-      case "End": e.preventDefault(); a.cursorEnd(); return;
-      case "Enter": e.preventDefault(); a.open(); return;
-      case "Backspace": e.preventDefault(); a.up(); return;
-      case " ": e.preventDefault(); a.preview(); return;
-    }
+    const handled = cfg.run(id);
+    if (handled !== false) e.preventDefault();
   });
 }

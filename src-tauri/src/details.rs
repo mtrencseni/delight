@@ -21,6 +21,7 @@ pub struct ChildEntry {
 pub struct Details {
     created_ms: Option<i64>,
     owner: Option<String>,
+    permissions: Option<String>,
     app_name: Option<String>,
     app_path: Option<String>,
     dir_count: Option<u64>,
@@ -68,6 +69,12 @@ fn gather(p: &PathBuf) -> Details {
         use std::os::unix::fs::MetadataExt;
         d.owner = uzers::get_user_by_uid(meta.uid())
             .map(|u| u.name().to_string_lossy().into_owned());
+    }
+
+    // Permission bits from the link's own metadata (matches the listing).
+    if let Ok(lmeta) = std::fs::symlink_metadata(p) {
+        let is_symlink = lmeta.file_type().is_symlink();
+        d.permissions = crate::fs_cmds::perm_string(&lmeta, is_symlink);
     }
 
     if meta.is_dir() {

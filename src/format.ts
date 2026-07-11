@@ -40,6 +40,16 @@ export function fmtDateCompact(ms: number | null): string {
   return d.toLocaleDateString(undefined, opts);
 }
 
+export function recency(ms: number | null): "today" | "yesterday" | null {
+  if (ms == null) return null;
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const DAY = 86400000;
+  if (ms >= start && ms < start + DAY) return "today";
+  if (ms >= start - DAY && ms < start) return "yesterday";
+  return null;
+}
+
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }

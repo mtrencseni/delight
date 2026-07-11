@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@crabnebula/tauri-plugin-drag':
+        specifier: ^2.1.0
+        version: 2.1.0
       '@tauri-apps/api':
         specifier: ^2
         version: 2.11.1
@@ -23,6 +26,9 @@ importers:
         version: 7.3.6
 
 packages:
+
+  '@crabnebula/tauri-plugin-drag@2.1.0':
+    resolution: {integrity: sha512-LnUXAZwQt1cdMoGDLJ6ogW9wFCYServCZXlGadS7CA+CZ9eXS7L+Q7QyQW6g/zGw9YI2MwKFqf1aSNBGyWw+OA==}
 
   '@esbuild/aix-ppc64@0.28.1':
     resolution: {integrity: sha512-Svl7tq8k/08+p6CXPpRjQ1fKX+1odH/BQbb48fV6fj3CWHhsoIOoY87w1oHXm0qEpkIK3ZfVgp0hed3XBXzXMQ==}
@@ -494,6 +500,10 @@ packages:
         optional: true
 
 snapshots:
+
+  '@crabnebula/tauri-plugin-drag@2.1.0':
+    dependencies:
+      '@tauri-apps/api': 2.11.1
 
   '@esbuild/aix-ppc64@0.28.1':
     optional: true

@@ -14,7 +14,40 @@ pub struct Entry {
     is_symlink: bool,
     size: u64,
     modified_ms: Option<i64>,
+    created_ms: Option<i64>,
+    permissions: Option<String>,
     hidden: bool,
+}
+
+/// `ls -l`-style type + rwx string, e.g. "drwxr-xr-x" or "-rw-r--r--".
+pub fn perm_string(meta: &std::fs::Metadata, is_symlink: bool) -> Option<String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = meta.permissions().mode();
+        let t = if is_symlink {
+            'l'
+        } else if meta.is_dir() {
+            'd'
+        } else {
+            '-'
+        };
+        let bit = |shift: u32, ch: char| if mode & (1 << shift) != 0 { ch } else { '-' };
+        let s: String = [
+            t,
+            bit(8, 'r'), bit(7, 'w'), bit(6, 'x'),
+            bit(5, 'r'), bit(4, 'w'), bit(3, 'x'),
+            bit(2, 'r'), bit(1, 'w'), bit(0, 'x'),
+        ]
+        .iter()
+        .collect();
+        Some(s)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (meta, is_symlink);
+        None
+    }
 }
 
 #[derive(Serialize)]
@@ -69,11 +102,11 @@ fn read_listing(path: String, child: Option<String>, home: Option<PathBuf>) -> R
         let meta = fmeta.as_ref().unwrap_or(&smeta);
         let is_dir = meta.is_dir();
         let size = if is_dir { 0 } else { meta.len() };
-        let modified_ms = meta
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_millis() as i64);
+        let to_ms = |t: std::time::SystemTime| t.duration_since(UNIX_EPOCH).ok().map(|d| d.as_millis() as i64);
+        let modified_ms = meta.modified().ok().and_then(to_ms);
+        let created_ms = meta.created().ok().and_then(to_ms);
+        // Permissions reflect the link's own bits (matches `ls -l` on symlinks).
+        let permissions = perm_string(&smeta, is_symlink);
         let as_path = Path::new(&name);
         let (stem, ext) = if is_dir {
             (name.clone(), None)
@@ -95,6 +128,8 @@ fn read_listing(path: String, child: Option<String>, home: Option<PathBuf>) -> R
             is_symlink,
             size,
             modified_ms,
+            created_ms,
+            permissions,
             hidden,
         });
     }

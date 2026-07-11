@@ -30,6 +30,10 @@
   --error-text: #b3261e;
   --folder: #47a1f2;
   --link: #4f9cf7;
+  --today: #58ab74;
+  --yesterday: #86ac93;
+  --sizebar: rgba(71, 161, 242, 0.15);
+  --tick: rgba(15, 23, 42, 0.09);
   --scroll: rgba(15, 23, 42, 0.25);
   --toast-bg: #1b1f27;
   --toast-text: #ffffff;
@@ -64,6 +68,10 @@
   --error-text: #ff8f88;
   --folder: #58a6f6;
   --link: #6db4ff;
+  --today: #86d79a;
+  --yesterday: #a7c5b0;
+  --sizebar: rgba(88, 166, 246, 0.18);
+  --tick: rgba(255, 255, 255, 0.08);
   --scroll: rgba(255, 255, 255, 0.25);
   --toast-bg: #e6e9ef;
   --toast-text: #1c1c1e;
@@ -146,6 +154,14 @@ svg {
   padding: 0.5rem 0.5rem 0;
   min-height: 2.375rem;
   background: var(--header); /* distinct strip; active tab flows into content */
+}
+
+/* Native window: the bar is the title bar — inset past the traffic lights
+   (fixed px, since they don't scale with the app's zoom). */
+:root.native .tabbar {
+  padding-top: 0.625rem;
+  padding-left: 80px;
+  min-height: 2.75rem;
 }
 
 .tabs,
@@ -390,14 +406,34 @@ body.tab-dragging * {
 .listhead,
 .row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--w-ext, 3.25rem) var(--w-size, 5.25rem) var(--w-mod, 8.5rem);
+  grid-template-columns: var(--grid-cols, minmax(4.5rem, 1fr) 3.25rem 5.25rem 8.5rem);
   align-items: center;
 }
 
 .listhead {
+  position: relative;
   margin-top: 0.375rem;
   padding: 0 0.875rem 0 0.375rem; /* right inset matches scrollbar width */
   border-bottom: 1px solid var(--border);
+}
+
+/* Drop indicator shown while dragging a column header to reorder. */
+.coldrop {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 2;
+}
+
+body.col-dragging,
+body.col-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .headcell {
@@ -453,6 +489,8 @@ body.col-resizing * {
 }
 
 .headcell.col-size,
+.headcell.col-created,
+.headcell.col-perms,
 .headcell.col-mod {
   justify-content: flex-end;
 }
@@ -492,11 +530,11 @@ body.col-resizing * {
   background: var(--hover);
 }
 
-.row.is-cursor {
+.row.is-selected {
   background: var(--cursor-inactive);
 }
 
-.pane.is-active .row.is-cursor {
+.pane.is-active .row.is-selected {
   background: var(--cursor);
 }
 
@@ -557,6 +595,8 @@ body.col-resizing * {
 
 .col-ext,
 .col-size,
+.col-created,
+.col-perms,
 .col-mod {
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
@@ -564,8 +604,60 @@ body.col-resizing * {
 }
 
 .col-size,
+.col-created,
+.col-perms,
 .col-mod {
   text-align: right;
+}
+
+.col-perms {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: -0.02em;
+}
+
+/* Size data bar: a proportional fill behind the size text (files only). Log mode
+   adds faint decade gridlines, masked to the bar so each file shows only its own
+   decades. Right-anchored in list rows / chips rows; left-anchored in the chip
+   Size tile. */
+.sizecell {
+  position: relative;
+}
+
+.sizecell > :not(.barfill) {
+  position: relative; /* keep text above the fill */
+}
+
+.barfill {
+  position: absolute;
+  inset: 0;
+  background-color: var(--sizebar);
+  -webkit-mask-image: linear-gradient(to left, #000 var(--bar, 0%), transparent 0);
+  mask-image: linear-gradient(to left, #000 var(--bar, 0%), transparent 0);
+}
+
+.barfill.ticks {
+  background-image: repeating-linear-gradient(
+    to left,
+    transparent 0,
+    transparent calc(var(--decade) - 1px),
+    var(--tick) calc(var(--decade) - 1px),
+    var(--tick) var(--decade)
+  );
+}
+
+.chtile .barfill {
+  -webkit-mask-image: linear-gradient(to right, #000 var(--bar, 0%), transparent 0);
+  mask-image: linear-gradient(to right, #000 var(--bar, 0%), transparent 0);
+}
+
+.chtile .barfill.ticks {
+  background-image: repeating-linear-gradient(
+    to right,
+    transparent 0,
+    transparent calc(var(--decade) - 1px),
+    var(--tick) calc(var(--decade) - 1px),
+    var(--tick) var(--decade)
+  );
 }
 
 .ficon {
@@ -604,14 +696,31 @@ body.col-resizing * {
 .ficon.type-pdf { color: var(--ft-pdf); }
 .ficon.type-exec { color: var(--ft-exec); }
 
+/* Recency cue: pale green for today, paler green for yesterday. */
+.col-mod.is-today,
+.col-created.is-today,
+.crowmeta.is-today,
+.chtile-v.is-today {
+  color: var(--today);
+}
+
+.col-mod.is-yesterday,
+.col-created.is-yesterday,
+.crowmeta.is-yesterday,
+.chtile-v.is-yesterday {
+  color: var(--yesterday);
+}
+
 /* Finder-style (dark): focused selection is a solid blue bar with light text.
    In light theme the cursor stays a pale wash, so normal colors remain. */
-:root[data-theme="dark"] .pane.is-active .row.is-cursor,
-:root[data-theme="dark"] .pane.is-active .row.is-cursor .col-ext,
-:root[data-theme="dark"] .pane.is-active .row.is-cursor .col-size,
-:root[data-theme="dark"] .pane.is-active .row.is-cursor .col-mod,
-:root[data-theme="dark"] .pane.is-active .row.is-cursor .ficon,
-:root[data-theme="dark"] .pane.is-active .row.is-cursor .disclose {
+:root[data-theme="dark"] .pane.is-active .row.is-selected,
+:root[data-theme="dark"] .pane.is-active .row.is-selected .col-ext,
+:root[data-theme="dark"] .pane.is-active .row.is-selected .col-size,
+:root[data-theme="dark"] .pane.is-active .row.is-selected .col-created,
+:root[data-theme="dark"] .pane.is-active .row.is-selected .col-perms,
+:root[data-theme="dark"] .pane.is-active .row.is-selected .col-mod,
+:root[data-theme="dark"] .pane.is-active .row.is-selected .ficon,
+:root[data-theme="dark"] .pane.is-active .row.is-selected .disclose {
   color: #ffffff;
 }
 
@@ -634,6 +743,89 @@ body.col-resizing * {
   color: var(--text-dim);
   font-size: 0.6875rem;
   min-height: 1.375rem;
+}
+
+/* ---------- opposite-pane preview ---------- */
+/* While previewing, the pathbar stays; the list/header/status give way to a
+   full-height preview of the other pane's cursor item. */
+.pane.previewing .listhead,
+.pane.previewing .rows,
+.pane.previewing .panestatus {
+  display: none;
+}
+
+.panepreview {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  padding: 0.625rem;
+  cursor: default;
+  animation: chipin 0.13s ease;
+}
+
+.panepreview.hidden {
+  display: none;
+}
+
+.pp-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: var(--panel-alt);
+  border: 0.5px solid var(--border);
+  border-radius: 0.625rem;
+  overflow: hidden;
+  color: var(--text-faint);
+}
+
+.pane.previewing.is-active .pp-stage {
+  border-color: var(--accent);
+}
+
+/* Fill the stage (not just cap at the raster's native size), keeping aspect. */
+.pp-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 0.375rem;
+}
+
+.pp-icon {
+  width: 5.5rem;
+  height: 5.5rem;
+}
+
+.pp-icon.is-dir {
+  color: var(--folder);
+}
+
+.pp-icon.is-link {
+  color: var(--link);
+}
+
+.pp-info {
+  flex: none;
+  text-align: center;
+  padding: 0 0.375rem;
+}
+
+.pp-name {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pp-meta {
+  margin-top: 0.125rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
 }
 
 /* ---------- grid (icon) view ---------- */
@@ -682,11 +874,11 @@ body.col-resizing * {
   background: var(--hover);
 }
 
-.tile.is-cursor {
+.tile.is-selected {
   background: var(--cursor-inactive);
 }
 
-.pane.is-active .tile.is-cursor {
+.pane.is-active .tile.is-selected {
   background: var(--cursor);
 }
 
@@ -718,8 +910,8 @@ body.col-resizing * {
   word-break: break-word;
 }
 
-:root[data-theme="dark"] .pane.is-active .tile.is-cursor,
-:root[data-theme="dark"] .pane.is-active .tile.is-cursor .gridicon {
+:root[data-theme="dark"] .pane.is-active .tile.is-selected,
+:root[data-theme="dark"] .pane.is-active .tile.is-selected .gridicon {
   color: #ffffff;
 }
 
@@ -783,6 +975,20 @@ body.col-resizing * {
 
 .pane.chip-cards .crow:hover {
   border-color: var(--border-strong, var(--accent));
+}
+
+/* Cursor on a compact row (e.g. "..") — the chip handles all other rows. */
+.pane .crow.is-selected {
+  background: var(--cursor-inactive);
+}
+
+.pane.is-active .crow.is-selected {
+  background: var(--cursor);
+}
+
+:root[data-theme="dark"] .pane.is-active .crow.is-selected,
+:root[data-theme="dark"] .pane.is-active .crow.is-selected .crowicon {
+  color: #ffffff;
 }
 
 .crowicon {
@@ -914,6 +1120,7 @@ body.col-resizing * {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  padding-right: 6rem; /* clear the upper-right permissions */
 }
 
 .chsub {
@@ -978,6 +1185,17 @@ body.col-resizing * {
   white-space: nowrap;
 }
 
+/* Permissions in the chip's upper-right corner (monospace). */
+.chperms {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.875rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.6875rem;
+  letter-spacing: 0.02em;
+  color: var(--text-faint);
+}
+
 .chpeek {
   margin-top: 0.375rem;
   font-size: 0.6875rem;
@@ -993,6 +1211,7 @@ body.col-resizing * {
   top: 2.5rem;
   right: 0.5rem;
   z-index: 20;
+  outline: none;
   min-width: 12rem;
   max-width: 16rem;
   padding: 0.25rem;
@@ -1020,6 +1239,38 @@ body.col-resizing * {
 
 .locitem:hover {
   background: var(--hover);
+}
+
+.locitem.active {
+  background: var(--accent-soft);
+}
+
+.locitem.dragging {
+  background: var(--accent-soft);
+  opacity: 0.9;
+}
+
+body.fav-dragging,
+body.fav-dragging * {
+  cursor: grabbing !important;
+}
+
+.locgrip {
+  width: 0.875rem;
+  height: 1rem;
+  flex: none;
+  color: var(--text-faint);
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.locitem:hover .locgrip {
+  opacity: 0.7;
+}
+
+.locgrip:hover {
+  opacity: 1;
 }
 
 .locicon {
@@ -1218,6 +1469,127 @@ body.col-resizing * {
   min-width: 3rem;
   text-align: center;
   font-variant-numeric: tabular-nums;
+  font-weight: 550;
+}
+
+/* A settings row that navigates elsewhere (e.g. → Shortcuts tab). */
+.linkbtn {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.5rem 0.375rem 0.625rem;
+  border-radius: 0.4375rem;
+  background: var(--panel-alt);
+  color: var(--text);
+  transition: background 0.12s ease;
+}
+
+.linkbtn:hover {
+  background: var(--hover);
+}
+
+.linkbtn svg {
+  width: 0.9375rem;
+  height: 0.9375rem;
+  flex: none;
+  color: var(--text-dim);
+}
+
+.linkbtn svg:last-child {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+/* ---------- shortcuts (keybindings) tab ---------- */
+.kbhead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.kbreset {
+  flex: none;
+  padding: 0.3125rem 0.625rem;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  background: var(--panel-alt);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.kbreset:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.kbrow {
+  gap: 1.5rem;
+}
+
+.kbcombos {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.kbchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.125rem;
+  padding: 0.1875rem 0.1875rem 0.1875rem 0.5rem;
+  border-radius: 0.375rem;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+}
+
+.kbchip-key {
+  font-size: 0.8125rem;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.kbchip-x {
+  width: 1.125rem;
+  height: 1.125rem;
+  padding: 0.25rem;
+  flex: none;
+  border-radius: 0.25rem;
+  color: var(--text-faint);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.kbchip-x:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.kbadd {
+  min-width: 1.75rem;
+  height: 1.75rem;
+  padding: 0 0.5rem;
+  border-radius: 0.375rem;
+  font-size: 0.9375rem;
+  color: var(--text-dim);
+  background: var(--panel-alt);
+  border: 1px dashed var(--border);
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.kbadd:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.kbadd.recording {
+  color: var(--accent);
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  font-size: 0.75rem;
   font-weight: 550;
 }
 

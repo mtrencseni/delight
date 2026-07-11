@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "security unlock-keychain -p '' ~/Library/Keychains/delight-signing.keychain-db 2>/dev/null; pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -16,7 +16,9 @@
         "width": 1160,
         "height": 740,
         "minWidth": 720,
-        "minHeight": 420
+        "minHeight": 420,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {
@@ -32,6 +34,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "Delight Self Signed"
+    }
   }
 }

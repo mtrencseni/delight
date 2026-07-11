@@ -46,6 +46,14 @@ export const icons = {
   ),
   bookmarks: svg('<path d="M4 2.5h8v11l-4-2.6-4 2.6z"/>'),
   house: svg('<path d="M2.5 7.5 8 3l5.5 4.5"/><path d="M4 6.9V13h8V6.9"/>'),
+  // Six-dot drag handle.
+  grip: svg(
+    '<circle cx="6" cy="4" r="1"/><circle cx="10" cy="4" r="1"/><circle cx="6" cy="8" r="1"/><circle cx="10" cy="8" r="1"/><circle cx="6" cy="12" r="1"/><circle cx="10" cy="12" r="1"/>',
+    false
+  ),
+  keyboard: svg(
+    '<rect x="1.75" y="4" width="12.5" height="8" rx="1.4"/><path d="M4 6.4h0M6.2 6.4h0M8.4 6.4h0M10.6 6.4h0M4 8.6h0M12 6.4h0M5.5 9.9h5" stroke-width="1.6"/>'
+  ),
 };
 
 // ---- filetype icons ---------------------------------------------------------

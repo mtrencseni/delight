@@ -55,6 +55,7 @@ const root: MNode = d({
         }),
       }),
       big: d(big, 1),
+      Dropbox: d({ "shared.txt": f(1024, 2), Camera: d({}) }, 1),
       locked: { dir: {}, denied: true, mtime: NOW - 99 * day },
       ".config": d({ "settings.toml": f(512, 12) }),
       ".ssh": d({ id_ed25519: f(411, 200), "id_ed25519.pub": f(98, 200) }),
@@ -138,6 +139,8 @@ function listDir(pathIn: string, child?: string | null) {
       isSymlink,
       size: isDir ? 0 : eff.size ?? 0,
       modifiedMs: n.mtime,
+      createdMs: n.mtime - 12 * day,
+      permissions: isSymlink ? "lrwxr-xr-x" : isDir ? "drwxr-xr-x" : "-rw-r--r--",
       hidden: name.startsWith("."),
     };
   });
@@ -210,6 +213,8 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
 
     case "fs_roots":
       return [{ name: SEP, path: SEP }] as T;
+    case "dropbox_dir":
+      return (HOME + "/Dropbox") as T;
     case "load_state": {
       const raw = localStorage.getItem("delight-state");
       return (raw ? JSON.parse(raw) : null) as T;
