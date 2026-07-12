@@ -21,7 +21,6 @@ export interface SettingsHooks {
   onShowPermissions(v: boolean): void;
   onNameCase(c: "original" | "lower" | "upper"): void;
   onLinkedSort(v: boolean): void;
-  onLinkedColumns(v: boolean): void;
   onOpenKeybindings(): void;
   onDevTools(v: boolean): void;
 }
@@ -108,7 +107,6 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
   const createdColSw = makeSwitch(() => hooks.get().showCreated, hooks.onShowCreated);
   const permsColSw = makeSwitch(() => hooks.get().showPermissions, hooks.onShowPermissions);
   const linkedSortSw = makeSwitch(() => hooks.get().linkedSort, hooks.onLinkedSort);
-  const linkedColsSw = makeSwitch(() => hooks.get().linkedColumns, hooks.onLinkedColumns);
 
   // Item-case segmented control (original / lowercase / uppercase).
   const caseSeg = el("div", "seg");
@@ -186,11 +184,6 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     row("Link both panes", "Sort both panes in a tab by the same column", linkedSortSw)
   );
 
-  section(
-    "Columns",
-    row("Link column order", "Share one column order across panes (drag a header to reorder)", linkedColsSw)
-  );
-
   const kbBtn = el("button", "linkbtn");
   kbBtn.innerHTML = `${icons.keyboard}<span>Configure shortcuts</span>${icons.chevron}`;
   kbBtn.addEventListener("click", () => hooks.onOpenKeybindings());
@@ -233,7 +226,6 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     setSwitch(createdColSw, s.showCreated);
     setSwitch(permsColSw, s.showPermissions);
     setSwitch(linkedSortSw, s.linkedSort);
-    setSwitch(linkedColsSw, s.linkedColumns);
     for (const [val, b] of caseBtns) b.classList.toggle("on", s.nameCase === val);
     setSwitch(devToolsSw, s.devTools);
     val.textContent = `${s.defaultZoom}%`;

@@ -105,8 +105,6 @@ export interface Settings {
   nameCase: "original" | "lower" | "upper";
   /** Keep both panes in a tab sorted by the same column/direction. */
   linkedSort: boolean;
-  /** Share one column order across all panes (vs per-pane order). */
-  linkedColumns: boolean;
   /** Enable the Web Inspector (⌥⌘I). */
   devTools: boolean;
 }

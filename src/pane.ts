@@ -1,7 +1,7 @@
 import { invoke, isTauri } from "./ipc";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import type { ChildEntry, ColKey, ColWidths, Details, Entry, Listing, Location, PaneState, SortDir, SortKey, ViewMode } from "./types";
-import { clamp, fmtDate, fmtDateCompact, humanSize, recency } from "./format";
+import { clamp, fmtDate, humanSize, recency } from "./format";
 import { fileIcon, icons } from "./icons";
 import {
   cachedDetails,
@@ -250,6 +250,8 @@ export class PaneView {
     this.rowLayer.addEventListener("contextmenu", (e) => e.preventDefault());
     // Drag selected items out to Finder / other apps (native drag session).
     this.rowLayer.addEventListener("dragstart", (e) => this.onDragStart(e));
+    // Icon view: drag across empty space to rubber-band select (Finder-style).
+    this.scroller.addEventListener("mousedown", (e) => this.onMarqueeMouseDown(e));
 
     this.applyViewMode();
     this.startWatch();
@@ -355,9 +357,9 @@ export class PaneView {
     }
   }
 
-  /** The active column order (shared or per-pane). */
+  /** The column order — one global spec shared by every pane and tab. */
   private colOrderKeys(): ColKey[] {
-    return state.settings.linkedColumns ? state.columnOrder : this.st.colOrder ?? state.columnOrder;
+    return state.columnOrder;
   }
 
   private colVisible(k: ColKey): boolean {
@@ -496,8 +498,7 @@ export class PaneView {
     // Rebuild the full order, keeping hidden columns pinned to their slots.
     let vi = 0;
     const newFull = this.colOrderKeys().map((k) => (this.colVisible(k) ? newVis[vi++] : k));
-    if (state.settings.linkedColumns) state.columnOrder = newFull;
-    else this.st.colOrder = newFull;
+    state.columnOrder = newFull; // one global order for all panes/tabs
     this.host.changed();
     this.host.columnsChanged();
   }
@@ -509,7 +510,7 @@ export class PaneView {
   }
 
   private applyColWidths(): void {
-    const w = this.st.colWidths;
+    const w = state.columnWidths;
     this.el.style.setProperty("--w-ext", `${w.ext}rem`);
     this.el.style.setProperty("--w-size", `${w.size}rem`);
     this.el.style.setProperty("--w-created", `${w.created}rem`);
@@ -523,10 +524,10 @@ export class PaneView {
     const min = { ext: 2.25, size: 3.5, created: 4.5, perms: 4.5, mod: 4.5 }[prop];
     const rootPx = parseFloat(getComputedStyle(document.documentElement).fontSize);
     const startX = e.clientX;
-    const startW = this.st.colWidths[prop] * rootPx;
+    const startW = state.columnWidths[prop] * rootPx;
     const move = (ev: MouseEvent) => {
       const w = clamp((startW - (ev.clientX - startX)) / rootPx, min, 20);
-      this.st.colWidths[prop] = Math.round(w * 100) / 100;
+      state.columnWidths[prop] = Math.round(w * 100) / 100;
       this.applyColWidths();
     };
     const up = () => {
@@ -534,6 +535,7 @@ export class PaneView {
       window.removeEventListener("mouseup", up);
       document.body.classList.remove("col-resizing");
       this.host.changed();
+      this.host.columnsChanged(); // push the new global width to every other pane
     };
     document.body.classList.add("col-resizing");
     window.addEventListener("mousemove", move);
@@ -713,6 +715,12 @@ export class PaneView {
   }
 
   // ---- view mode -------------------------------------------------------------
+
+  /** Switch this pane's view mode (list / chips / grid). Used by the toolbar
+      segmented control and the ⌘L / ⌘C / ⌘I shortcuts. */
+  setView(mode: ViewMode): void {
+    this.setViewMode(mode);
+  }
 
   private setViewMode(mode: ViewMode): void {
     if (this.st.viewMode === mode) return;
@@ -937,6 +945,118 @@ export class PaneView {
     this.finishRender(frag, n);
   }
 
+  // ---- icon-view marquee (rubber-band) selection ----
+  private marqueeEl: HTMLElement | null = null;
+
+  /** Grid mode: press-drag on empty space rubber-band selects, like Finder.
+      Shift/⌘/⌃ adds to the existing selection; a plain drag replaces it (and a
+      plain click on empty space clears it). */
+  private onMarqueeMouseDown(e: MouseEvent): void {
+    if (e.button !== 0 || !this.isGrid()) return;
+    if ((e.target as HTMLElement).closest(".tile")) return; // a tile → normal selection path
+    const rect = this.scroller.getBoundingClientRect();
+    if (e.clientX - rect.left >= this.scroller.clientWidth) return; // on the scrollbar
+    e.preventDefault();
+    const additive = e.shiftKey || e.metaKey || e.ctrlKey;
+    const base = additive ? new Set(this.selection) : new Set<number>();
+    if (!additive && this.selection.size) {
+      this.selection = new Set();
+      this.renderRows();
+      this.updateStatus();
+    }
+    const sx = e.clientX - rect.left + this.scroller.scrollLeft;
+    const sy = e.clientY - rect.top + this.scroller.scrollTop;
+    const mq = div("marquee");
+    this.scroller.append(mq);
+    this.marqueeEl = mq;
+
+    // Latest pointer position (kept up to date so the auto-scroll loop can keep
+    // extending the selection while the mouse is held still past the edge).
+    let px = e.clientX;
+    let py = e.clientY;
+    let autoScroll = 0;
+    let raf = 0;
+    const EDGE = 28; // px band at top/bottom that triggers auto-scroll
+    const MAX_SPEED = 26; // px per frame at full tilt
+
+    const paint = () => {
+      const cx = clamp(px - rect.left, 0, this.scroller.clientWidth) + this.scroller.scrollLeft;
+      const cy = clamp(py - rect.top, 0, this.scroller.clientHeight) + this.scroller.scrollTop;
+      const x0 = Math.min(sx, cx),
+        y0 = Math.min(sy, cy),
+        x1 = Math.max(sx, cx),
+        y1 = Math.max(sy, cy);
+      mq.style.cssText = `left:${x0}px;top:${y0}px;width:${x1 - x0}px;height:${y1 - y0}px`;
+      this.applyMarquee(base, x0, y0, x1, y1);
+    };
+
+    const tick = () => {
+      raf = requestAnimationFrame(tick);
+      if (autoScroll === 0) return;
+      const max = this.scroller.scrollHeight - this.scroller.clientHeight;
+      const next = clamp(this.scroller.scrollTop + autoScroll, 0, max);
+      if (next !== this.scroller.scrollTop) {
+        this.scroller.scrollTop = next;
+        paint(); // extend the marquee/selection into the newly revealed rows
+      }
+    };
+
+    const onMove = (ev: MouseEvent) => {
+      px = ev.clientX;
+      py = ev.clientY;
+      // Distance past the top/bottom edge (also fires when the mouse leaves the
+      // window entirely — clientY < top or > bottom), scaled to a scroll speed.
+      const top = rect.top;
+      const bottom = rect.top + this.scroller.clientHeight;
+      if (py < top + EDGE) {
+        autoScroll = -Math.min(MAX_SPEED, Math.ceil((top + EDGE - py) / 2));
+      } else if (py > bottom - EDGE) {
+        autoScroll = Math.min(MAX_SPEED, Math.ceil((py - (bottom - EDGE)) / 2));
+      } else {
+        autoScroll = 0;
+      }
+      paint();
+    };
+    const onUp = () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      mq.remove();
+      this.marqueeEl = null;
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    raf = requestAnimationFrame(tick);
+  }
+
+  /** Select every selectable tile whose cell intersects the marquee rectangle
+      (in content coordinates), unioned with the pre-drag `base` selection. */
+  private applyMarquee(base: Set<number>, x0: number, y0: number, x1: number, y1: number): void {
+    const cols = this.gridCols();
+    const tw = this.tileW();
+    const th = this.tileH();
+    const n = this.view.length;
+    const c0 = Math.max(0, Math.floor(x0 / tw));
+    const c1 = Math.min(cols - 1, Math.floor(x1 / tw));
+    const r0 = Math.max(0, Math.floor(y0 / th));
+    const r1 = Math.floor(y1 / th);
+    const sel = new Set(base);
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) {
+        const i = r * cols + c;
+        if (i < n && this.isSelectable(i)) sel.add(i);
+      }
+    }
+    this.selection = sel;
+    const last = Array.from(sel).pop();
+    if (last !== undefined) {
+      this.st.cursor = last;
+      this.anchor = last;
+    }
+    this.renderRows();
+    this.updateStatus();
+  }
+
   private finishRender(frag: DocumentFragment, n: number): void {
     this.rowLayer.replaceChildren(frag);
     if (n === 0 && this.st.listing) {
@@ -962,8 +1082,8 @@ export class PaneView {
     const en = this.view[this.st.cursor]?.entry;
     const tall = !!en && en !== UP_ENTRY && en.isDir;
     const base = tall ? 8.5 : 7.25;
-    // "Bigger chips" ~3× the height so the content preview is far more visible.
-    return this.remPx() * (state.settings.bigChips ? base * 3 : base);
+    // "Bigger chips" ~2× the height so the content preview is more visible.
+    return this.remPx() * (state.settings.bigChips ? base * 2 : base);
   }
   private chipOffset(i: number): number {
     const rh = this.compactRowH();
@@ -1068,9 +1188,15 @@ export class PaneView {
       when the file has no previewable content (QuickLook returns null). */
   private applyPreviewIcon(ic: HTMLElement, en: Entry, dirPath: string, size: number): void {
     const sysFallback = this.host.sysIcons();
+    // `thumb` marks a real content preview (vs a system/vector icon) so list view
+    // can draw a Finder-style hairline outline around it.
+    const setThumb = (uri: string) => {
+      this.setSysImg(ic, uri);
+      ic.classList.add("thumb");
+    };
     const cached = cachedThumbnail(dirPath, en.name, size);
     if (cached) {
-      this.setSysImg(ic, cached);
+      setThumb(cached);
       return;
     }
     if (cached === null) {
@@ -1079,29 +1205,27 @@ export class PaneView {
     }
     void fetchThumbnail(dirPath, en.name, size).then((uri) => {
       if (!ic.isConnected) return;
-      if (uri) this.setSysImg(ic, uri);
+      if (uri) setThumb(uri);
       else if (sysFallback) this.applySystemIcon(ic, en, dirPath);
     });
   }
 
-  private buildRow(i: number, rh: number): HTMLElement {
-    const { entry: en, depth, open, dirPath } = this.view[i];
-    const row = div(
-      "row" +
-        (en.isDir ? " is-dir" : "") +
-        (en.isSymlink ? " is-link" : "") +
-        (en.hidden ? " is-hidden" : "") +
-        this.selClass(i)
-    );
-    row.style.top = `${i * rh}px`;
-    row.dataset.i = String(i);
-    row.draggable = en !== UP_ENTRY;
-
+  /** Build the ordered column cells for an entry. Shared by list rows AND the
+      compact chips rows so both honor the exact same column spec (order, width,
+      visibility) — switching views keeps the columns identical. `disclosure`
+      draws the tree triangle (list view only; chips are flat). */
+  private buildCells(
+    en: Entry,
+    depth: number,
+    open: boolean,
+    dirPath: string,
+    disclosure: boolean
+  ): Partial<Record<ColKey, HTMLElement>> {
     const name = div("cell col-name");
     if (depth > 0) name.style.paddingLeft = `${0.25 + depth}rem`;
 
     const disc = div("disclose");
-    if (en !== UP_ENTRY && en.isDir) {
+    if (disclosure && en !== UP_ENTRY && en.isDir) {
       disc.classList.add("can");
       if (open) disc.classList.add("open");
       disc.innerHTML = icons.chevron;
@@ -1127,7 +1251,6 @@ export class PaneView {
     const mod = div("cell col-mod" + this.recencyClass(en));
     mod.textContent = fmtDate(en.modifiedMs);
 
-    // Cells keyed by column so they can be appended in the configured order.
     const byKey: Partial<Record<ColKey, HTMLElement>> = { name, ext, size, mod };
     if (state.settings.showCreated) {
       const created = div("cell col-created" + this.recencyClassOf(en.createdMs));
@@ -1139,10 +1262,30 @@ export class PaneView {
       perms.textContent = en.permissions ?? "";
       byKey.perms = perms;
     }
+    return byKey;
+  }
+
+  /** Append the column cells to a row in the configured display order. */
+  private appendCells(row: HTMLElement, byKey: Partial<Record<ColKey, HTMLElement>>): void {
     for (const col of this.columns()) {
       const cell = byKey[col.key];
       if (cell) row.append(cell);
     }
+  }
+
+  private buildRow(i: number, rh: number): HTMLElement {
+    const { entry: en, depth, open, dirPath } = this.view[i];
+    const row = div(
+      "row" +
+        (en.isDir ? " is-dir" : "") +
+        (en.isSymlink ? " is-link" : "") +
+        (en.hidden ? " is-hidden" : "") +
+        this.selClass(i)
+    );
+    row.style.top = `${i * rh}px`;
+    row.dataset.i = String(i);
+    row.draggable = en !== UP_ENTRY;
+    this.appendCells(row, this.buildCells(en, depth, open, dirPath, true));
     return row;
   }
 
@@ -1174,7 +1317,7 @@ export class PaneView {
   // ---- chips: compact row + expanded chip ----
 
   private buildChipRow(i: number, rh: number): HTMLElement {
-    const { entry: en, dirPath } = this.view[i];
+    const { entry: en, depth, open, dirPath } = this.view[i];
     const row = div(
       "crow" +
         (en.isDir ? " is-dir" : "") +
@@ -1187,20 +1330,8 @@ export class PaneView {
     const gap = state.settings.chipCards ? 3 : 0;
     row.style.top = `${this.chipOffset(i) + gap}px`;
     row.style.height = `${rh - gap * 2}px`;
-    const ic = div("ficon crowicon");
-    this.iconInto(ic, en, dirPath);
-    const name = document.createElement("span");
-    name.className = "fname";
-    name.textContent = en === UP_ENTRY ? en.name : this.disp(en.name);
-    const size = div("crowmeta sizecell");
-    const sv = document.createElement("span");
-    sv.className = "cellval";
-    sv.textContent = en === UP_ENTRY ? "" : en.isDir ? "<DIR>" : humanSize(en.size);
-    this.appendSizeBar(size, en);
-    size.append(sv);
-    const mod = div("crowmeta" + this.recencyClass(en));
-    mod.textContent = fmtDate(en.modifiedMs);
-    row.append(ic, name, size, mod);
+    // Same columns as the list row (chips are flat, so no disclosure triangle).
+    this.appendCells(row, this.buildCells(en, depth, open, dirPath, false));
     return row;
   }
 
@@ -1265,16 +1396,18 @@ export class PaneView {
       t.append(l, v);
       return t;
     };
-    // Permissions sit in the chip's upper-right corner (monospace), keeping the
-    // body to two tidy rows: header + a single row of tiles.
+    // Permissions: normally pinned to the chip's upper-right corner (CSS absolute);
+    // in "Bigger chips" it flows in the body as a right-aligned line under the type.
+    // Either way it lives in the body so big mode can stack it.
     if (en.permissions) {
       const perms = div("chperms");
       perms.textContent = en.permissions;
-      chip.append(perms);
+      body.append(perms);
     }
 
     const tiles = div("chtiles");
-    const modStr = fmtDateCompact(en.modifiedMs);
+    // Same strings (and recency coloring) as the list-view Modified/Created columns.
+    const modStr = fmtDate(en.modifiedMs);
     const modTile = mk("Modified", "modified", modStr, this.recencyClass(en));
     // Order: Size · Owner · Created · Modified. In "Bigger chips" the .chtiles grid
     // is 2-wide (styles.css), so these wrap to row 1 = Size·Owner, row 2 = Created·Modified.
@@ -1298,7 +1431,7 @@ export class PaneView {
     const cd = cachedDetails(dirPath, en.name);
     if (cd) this.applyChipDetails(chip, en, dirPath, cd);
     if (!en.isDir) {
-      const ct = cachedThumbnail(dirPath, en.name);
+      const ct = cachedThumbnail(dirPath, en.name, state.settings.previewSize);
       if (ct) this.applyChipThumb(chip, ct);
     }
     this.scheduleChipData(this.chipKey, dirPath, en);
@@ -1308,7 +1441,8 @@ export class PaneView {
   private scheduleChipData(key: string, dirPath: string, en: Entry): void {
     clearTimeout(this.chipTimer);
     const haveDetails = cachedDetails(dirPath, en.name) !== undefined;
-    const haveThumb = en.isDir || cachedThumbnail(dirPath, en.name) !== undefined;
+    const haveThumb =
+      en.isDir || cachedThumbnail(dirPath, en.name, state.settings.previewSize) !== undefined;
     if (haveDetails && haveThumb) return; // already applied synchronously
     this.chipTimer = window.setTimeout(() => {
       if (this.chipKey !== key) return; // moved on before the debounce fired
@@ -1318,7 +1452,7 @@ export class PaneView {
         if (chip) this.applyChipDetails(chip, en, dirPath, d);
       });
       if (!en.isDir) {
-        void fetchThumbnail(dirPath, en.name).then((uri) => {
+        void fetchThumbnail(dirPath, en.name, state.settings.previewSize).then((uri) => {
           if (this.chipKey !== key || !uri) return;
           const chip = this.rowLayer.querySelector<HTMLElement>(".chip");
           if (chip) this.applyChipThumb(chip, uri);
@@ -1332,7 +1466,7 @@ export class PaneView {
       const el = chip.querySelector<HTMLElement>(`[data-field="${field}"]`);
       if (el) el.textContent = val;
     };
-    set("created", fmtDateCompact(d.createdMs));
+    set("created", fmtDate(d.createdMs));
     // Same recency tint as Modified, based on the created time.
     const createdEl = chip.querySelector<HTMLElement>('[data-field="created"]');
     if (createdEl) {
@@ -1370,6 +1504,14 @@ export class PaneView {
     const label = document.createElement("span");
     label.textContent = `Opens with ${appName}`;
     pill.append(ic, label);
+    // Clicking the pill opens the item, same as double-click / Enter.
+    pill.title = `Open with ${appName}`;
+    pill.addEventListener("mousedown", (e) => e.stopPropagation());
+    pill.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const idx = Number(chip.dataset.i);
+      if (Number.isFinite(idx)) this.openIndex(idx);
+    });
     sub.append(pill);
     if (!appPath) return;
     const cached = cachedIconForPath(appPath);

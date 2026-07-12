@@ -26,6 +26,8 @@
   --cursor: #dbe6ff;
   --cursor-inactive: #eaedf3;
   --hover: rgba(15, 23, 42, 0.05);
+  --sel-icon: rgba(15, 23, 42, 0.08);
+  --thumb-outline: rgba(15, 23, 42, 0.16);
   --error-bg: #fdecec;
   --error-text: #b3261e;
   --folder: #47a1f2;
@@ -65,6 +67,8 @@
   --cursor: #0a5dce;
   --cursor-inactive: #39393d;
   --hover: rgba(255, 255, 255, 0.05);
+  --sel-icon: rgba(255, 255, 255, 0.13);
+  --thumb-outline: rgba(255, 255, 255, 0.22);
   --error-bg: #3a2226;
   --error-text: #ff8f88;
   --folder: #58a6f6;
@@ -520,6 +524,15 @@ body.col-resizing * {
   width: 1px;
 }
 
+/* Icon-view rubber-band selection rectangle. */
+.marquee {
+  position: absolute;
+  z-index: 5;
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+  pointer-events: none;
+}
+
 .row {
   position: absolute;
   left: 0;
@@ -678,11 +691,13 @@ body.col-resizing * {
   color: var(--text-faint);
 }
 
-.row.is-dir .ficon {
+.row.is-dir .ficon,
+.crow.is-dir .ficon {
   color: var(--folder);
 }
 
-.row.is-link .ficon {
+.row.is-link .ficon,
+.crow.is-link .ficon {
   color: var(--link);
 }
 
@@ -696,6 +711,14 @@ body.col-resizing * {
   height: 100%;
   object-fit: contain;
   display: block;
+}
+
+/* Finder-style hairline outline around a real content preview in list view
+   (only for thumbnails — system/vector icons are left bare). */
+.row .ficon.thumb {
+  border: 0.5px solid var(--thumb-outline);
+  border-radius: 2px;
+  box-sizing: border-box;
 }
 
 .ficon.type-image { color: var(--ft-image); }
@@ -740,7 +763,14 @@ body.col-resizing * {
 :root[data-theme="dark"] .pane.is-active .row.is-selected .col-perms,
 :root[data-theme="dark"] .pane.is-active .row.is-selected .col-mod,
 :root[data-theme="dark"] .pane.is-active .row.is-selected .ficon,
-:root[data-theme="dark"] .pane.is-active .row.is-selected .disclose {
+:root[data-theme="dark"] .pane.is-active .row.is-selected .disclose,
+:root[data-theme="dark"] .pane.is-active .crow.is-selected,
+:root[data-theme="dark"] .pane.is-active .crow.is-selected .col-ext,
+:root[data-theme="dark"] .pane.is-active .crow.is-selected .col-size,
+:root[data-theme="dark"] .pane.is-active .crow.is-selected .col-created,
+:root[data-theme="dark"] .pane.is-active .crow.is-selected .col-perms,
+:root[data-theme="dark"] .pane.is-active .crow.is-selected .col-mod,
+:root[data-theme="dark"] .pane.is-active .crow.is-selected .ficon {
   color: #ffffff;
 }
 
@@ -894,12 +924,34 @@ body.col-resizing * {
   background: var(--hover);
 }
 
+/* Finder-style icon selection: no full-tile fill. Instead a soft rounded tint
+   behind the icon and a rounded highlight pill hugging the filename (blue when
+   the pane is active, gray otherwise). */
 .tile.is-selected {
-  background: var(--cursor-inactive);
+  background: transparent;
 }
 
-.pane.is-active .tile.is-selected {
+.tile.is-selected .gridicon {
+  border-radius: 0.375rem;
+  background: var(--sel-icon);
+  box-shadow: 0 0 0 0.3125rem var(--sel-icon);
+}
+
+.tile.is-selected .fname {
+  background: var(--cursor-inactive);
+  color: var(--text);
+  border-radius: 0.5rem;
+  padding: 0.0625rem 0.375rem;
+}
+
+.pane.is-active .tile.is-selected .fname {
   background: var(--cursor);
+}
+
+/* Dark theme's active cursor is a strong blue → white label text for contrast.
+   Light theme keeps dark text on its pale-blue pill. */
+:root[data-theme="dark"] .pane.is-active .tile.is-selected .fname {
+  color: #ffffff;
 }
 
 .tile.is-hidden {
@@ -923,16 +975,13 @@ body.col-resizing * {
   font-size: 11px;
   line-height: 1.25;
   max-width: 100%;
+  width: fit-content; /* so the selection pill hugs the text, not the whole tile */
+  margin: 0 auto;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
   word-break: break-word;
-}
-
-:root[data-theme="dark"] .pane.is-active .tile.is-selected,
-:root[data-theme="dark"] .pane.is-active .tile.is-selected .gridicon {
-  color: #ffffff;
 }
 
 /* ---------- view segmented control ---------- */
@@ -965,21 +1014,20 @@ body.col-resizing * {
 }
 
 /* ---------- chips view ---------- */
-.pane.chips .listhead {
-  display: none;
-}
+/* The list header stays visible in chips view too, so switching list↔chips
+   doesn't shift every row up/down by the header's height. */
 
+/* Compact chips rows use the SAME grid + cells as list rows, so the columns
+   (order, width, visibility — including Perms) line up under the shared header
+   and stay identical when switching between list and chips. */
 .crow {
   position: absolute;
   left: 0;
   right: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--grid-cols, minmax(4.5rem, 1fr) 3.25rem 5.25rem 8.5rem);
   align-items: center;
-  gap: 0.3125rem; /* icon→name gap matches list view's .col-name */
-  /* Left indent lines the icon/name up with list view (row 0.375 + cell 0.25 +
-     disclosure 0.875 + gap 0.3125 = 1.8125rem) so items don't jump horizontally
-     when switching between list and chips. */
-  padding: 0 0.625rem 0 1.8125rem;
+  padding: 0 0.375rem;
   cursor: default;
 }
 
@@ -987,11 +1035,11 @@ body.col-resizing * {
   background: var(--hover);
 }
 
+/* Card rows: inset + bordered variant of the same grid. */
 .pane.chip-cards .crow {
   left: 0.5rem;
   right: 0.5rem;
-  /* left inset 0.5 (card) + 1.3125 = 1.8125rem, same icon x as list view */
-  padding: 0 0.5rem 0 1.3125rem;
+  box-sizing: border-box;
   background: var(--panel-alt);
   border: 0.5px solid var(--border);
   border-radius: 0.5rem;
@@ -1010,51 +1058,8 @@ body.col-resizing * {
   background: var(--cursor);
 }
 
-:root[data-theme="dark"] .pane.is-active .crow.is-selected,
-:root[data-theme="dark"] .pane.is-active .crow.is-selected .crowicon {
-  color: #ffffff;
-}
-
-.crowicon {
-  width: 1rem;
-  height: 1rem;
-  flex: none;
-  color: var(--text-faint);
-}
-
-.crow.is-dir .crowicon {
-  color: var(--folder);
-}
-
-.crow.is-link .crowicon {
-  color: var(--link);
-}
-
 .crow.is-hidden {
   opacity: 0.55;
-}
-
-.crow .fname {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.crowmeta {
-  flex: none;
-  color: var(--text-dim);
-  font-size: 0.75rem;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-.crow > .crowmeta:nth-child(3) {
-  width: 4.5rem;
-}
-
-.crow > .crowmeta:nth-child(4) {
-  width: 8rem;
 }
 
 .chip {
@@ -1160,12 +1165,19 @@ body.col-resizing * {
 .opens {
   display: inline-flex;
   align-items: center;
-  gap: 0.3125rem;
-  padding: 0.0625rem 0.5rem;
+  gap: 0.375rem;
+  padding: 0.3125rem 0.8125rem; /* roomier pill around "Opens with …" */
+  font-size: 0.875rem;
   background: var(--panel);
   border: 0.5px solid var(--border);
   border-radius: 999px;
   color: var(--text);
+  cursor: pointer; /* clicking opens the item */
+}
+
+.opens:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .opensic {
@@ -1229,38 +1241,65 @@ body.col-resizing * {
   white-space: nowrap;
 }
 
-/* ---------- Bigger chips: large preview + two rows of detail tiles ---------- */
+/* ---------- Bigger chips: wide preview + two rows of detail tiles ---------- */
+/* The preview takes a big share of the width and stretches to the chip height;
+   the detail tiles wrap to a 2×2 grid but keep their regular (compact) height. */
 .pane.big-chips .chthumb {
-  width: 40%;
-  max-width: 15rem;
+  width: 55%;
+  max-width: 22rem;
   height: auto;
-  align-self: stretch; /* fill the taller chip so the preview is large */
+  align-self: stretch;
 }
 
 .pane.big-chips .chthumb > .ficon {
-  width: 4.5rem;
-  height: 4.5rem;
+  width: 5rem;
+  height: 5rem;
 }
 
-/* Header keeps its natural height; the tile grid grows to fill the rest so the
-   four details become big, readable panels rather than a thin strip. */
+/* Right side: the filename is pinned to the top (large, right-aligned); the rest
+   sinks to the bottom in the order perms → type → tiles (via flex `order`, with
+   chtitle's margin-bottom:auto absorbing the free space between). Everything is
+   right-aligned. The two half-line gaps (type-above-tiles == perms-above-type)
+   are equal. */
+.pane.big-chips .chtitle {
+  order: 1;
+  margin-bottom: auto; /* pin to top; everything below sinks to the bottom */
+  font-size: 1.15rem;
+  text-align: right;
+  padding-right: 0;
+}
+
+.pane.big-chips .chperms {
+  order: 2;
+  position: static;
+  text-align: right;
+}
+
+.pane.big-chips .chsub {
+  order: 3;
+  justify-content: flex-end;
+  margin-top: 0.85rem; /* gap: perms → type */
+}
+
 .pane.big-chips .chtiles {
+  order: 4;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-auto-rows: 1fr;
-  flex: 1;
-  margin-top: 0.625rem;
+  margin-top: 0.85rem; /* same gap: type → tiles */
 }
 
+.pane.big-chips .chpeek {
+  order: 5;
+}
+
+/* Right-align the text inside the Owner/Created/Modified boxes… */
 .pane.big-chips .chtile {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 0.25rem;
-  padding: 0.5rem 0.75rem;
+  text-align: right;
 }
 
-.pane.big-chips .chtile-v {
-  font-size: 0.875rem;
+/* …but the Size box reads left→right (its data bar fills from the left), so its
+   label + value start on the left edge, above where the bar begins. */
+.pane.big-chips .chtile.sizecell {
+  text-align: left;
 }
 
 /* ---------- locations popover ---------- */

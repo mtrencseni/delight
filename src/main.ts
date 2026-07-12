@@ -52,6 +52,20 @@ class App {
     this.restoreSettings(saved);
     state.keybindings = mergeKeybindings(saved?.keybindings);
     state.columnOrder = normalizeColumnOrder(saved?.columnOrder);
+    // Global column widths (fall back per-key to the defaults, and to an older
+    // per-pane snapshot so existing configs keep their widths).
+    {
+      const num = (v: unknown, d: number) =>
+        typeof v === "number" && isFinite(v) && v > 0 && v <= 20 ? v : d;
+      const cw = saved?.columnWidths ?? saved?.tabs?.find((t: any) => t?.panes)?.panes?.[0]?.colWidths;
+      state.columnWidths = {
+        ext: num(cw?.ext, state.columnWidths.ext),
+        size: num(cw?.size, state.columnWidths.size),
+        created: num(cw?.created, state.columnWidths.created),
+        perms: num(cw?.perms, state.columnWidths.perms),
+        mod: num(cw?.mod, state.columnWidths.mod),
+      };
+    }
 
     // Restore saved locations; default to just the user's home.
     const savedLocs = Array.isArray(saved?.locations) ? saved.locations : null;
@@ -117,6 +131,7 @@ class App {
       closeTab: () => this.closeTab(state.activeTab),
       nextTab: () => this.cycleTab(1),
       prevTab: () => this.cycleTab(-1),
+      cycleTabs: () => this.cycleTab(1),
       openSettings: () => this.addSettingsTab(true),
       switchPane: () => this.switchPane(),
       cursorUp: () => this.activePane()?.moveCursor(-1),
@@ -137,6 +152,9 @@ class App {
       sortSize: () => this.activePane()?.cycleSort("size"),
       sortCreated: () => this.activePane()?.cycleSort("created"),
       sortModified: () => this.activePane()?.cycleSort("modified"),
+      viewList: () => this.activePane()?.setView("list"),
+      viewChips: () => this.activePane()?.setView("chips"),
+      viewGrid: () => this.activePane()?.setView("grid"),
       zoomIn: () => this.zoomStep(1),
       zoomOut: () => this.zoomStep(-1),
       zoomReset: () => this.setZoom(state.settings.defaultZoom, true),
@@ -179,7 +197,6 @@ class App {
       if (typeof s.showPermissions === "boolean") state.settings.showPermissions = s.showPermissions;
       if (["original", "lower", "upper"].includes(s.nameCase)) state.settings.nameCase = s.nameCase;
       if (typeof s.linkedSort === "boolean") state.settings.linkedSort = s.linkedSort;
-      if (typeof s.linkedColumns === "boolean") state.settings.linkedColumns = s.linkedColumns;
       if (typeof s.devTools === "boolean") state.settings.devTools = s.devTools;
     }
     state.zoom = ZOOM_LEVELS.includes(saved?.zoom) ? saved.zoom : state.settings.defaultZoom;
@@ -274,8 +291,10 @@ class App {
         this.syncPaneActive(tab);
       },
       changed: () => {
-        // Navigating/sorting the browsed pane invalidates an open preview.
-        if (this.previewSource && pane() === this.previewSource) this.closePanePreview();
+        // Keep an open preview alive when the browsed pane navigates or re-sorts —
+        // just re-point it at the new cursor item (Finder-style: the preview pane
+        // stays up across folder changes until you dismiss it with Space).
+        if (this.previewSource && pane() === this.previewSource) this.refreshPanePreview();
         this.renderTabstrip();
         persist();
       },
@@ -336,7 +355,12 @@ class App {
         perms: num(r?.colWidths?.perms, 6),
         mod: num(r?.colWidths?.mod, 8.5),
       },
-      viewMode: r?.viewMode === "grid" ? "grid" : "list",
+      // Honor any persisted mode; fresh panes default to chips (the "Big Chips"
+      // view). Previously "chips" was wrongly coerced to "list" on restore.
+      viewMode:
+        r?.viewMode === "grid" || r?.viewMode === "chips" || r?.viewMode === "list"
+          ? r.viewMode
+          : "chips",
       gridSize: clamp(num(r?.gridSize, GRID_DEFAULT), GRID_MIN, GRID_MAX),
       colOrder: Array.isArray(r?.colOrder) ? normalizeColumnOrder(r.colOrder) : undefined,
     });
@@ -461,12 +485,6 @@ class App {
         }
         persist();
       },
-      onLinkedColumns: (v) => {
-        state.settings.linkedColumns = v;
-        // Switching to shared adopts the current global order everywhere.
-        for (const view of this.views.values()) view.panes?.forEach((p) => p.refreshColumns());
-        persist();
-      },
       onDevTools: (v) => {
         state.settings.devTools = v;
         this.syncDevBtn();
@@ -587,8 +605,14 @@ class App {
   }
 
   cycleTab(d: 1 | -1): void {
-    const n = state.tabs.length;
-    this.activateTab((state.activeTab + d + n) % n);
+    // Cycle only through file tabs — skip the Settings / Shortcuts system tabs.
+    const files = state.tabs.filter((t) => t.kind === "files");
+    if (files.length === 0) return;
+    const cur = state.tabs[state.activeTab];
+    const i = files.indexOf(cur);
+    const next =
+      i === -1 ? files[d > 0 ? 0 : files.length - 1] : files[(i + d + files.length) % files.length];
+    this.activateTab(state.tabs.indexOf(next));
   }
 
   private tabTitle(tab: Tab): string {

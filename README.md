@@ -13,23 +13,32 @@ look-alike).
 
 **Browsing**
 - Two independent panes with tabs (Chrome-style: drag to reorder, middle-click to close).
-- Three views per pane: **List** (sortable, resizable, reorderable columns), **Icons** (grid), and **Chips** (the selected item expands into a rich detail card).
+- Three views per pane, switchable with **⌘L / ⌘C / ⌘I**:
+  - **List** — sortable, resizable, reorderable columns.
+  - **Chips** — the selected item expands into a rich detail card; **Bigger chips**
+    (the default) gives it a large content preview with the details beside it. The
+    compact rows share the list's exact columns, so switching list↔chips doesn't shift anything.
+  - **Icons** — a grid with Finder-style selection and **rubber-band (marquee)
+    selection**: drag across empty space to select, auto-scrolling at the edges.
 - Finder-style disclosure triangles: expand a folder inline as a tree without leaving the pane.
-- Editable path bar — type a path and press Enter.
+- Editable path bar — type a path and press Enter. Open folders **auto-refresh** when their contents change on disk.
 
 **Selecting & sorting**
 - Multi-select: click, **Shift-click** for a range, **⌘/⌃-click** to toggle, **Shift+↑/↓** to extend, **⌘A** to select all.
-- Sort by clicking a header or with **⌘N / ⌘E / ⌘S / ⌘C / ⌘M** (name / ext / size / created / modified). Optionally keep both panes in sync.
-- Optional **Created** and **Permissions** columns; drag headers to reorder them.
+- Sort by clicking a header or with **⌘N / ⌘E / ⌘S / ⌘⇧C / ⌘M** (name / ext / size / created / modified). Optionally keep both panes in sync.
+- Optional **Created** and **Permissions** columns. Column order and widths are **one
+  global spec** — reorder or resize in any pane and every pane and tab follows.
 
 **Working with files**
-- **Double-click / Enter** a file → opens in the default app. **Space** → a live preview in the opposite pane (or a Finder Quick Look window — your choice).
+- **Double-click / Enter** a file → opens in the default app. **Space** → a live preview in the opposite pane (or a Finder Quick Look window — your choice); the preview pane **stays open across folder changes**, tracking the cursor like Finder.
+- **Preview icons** (optional, Finder-style): show real content thumbnails in list & icon views, at your chosen resolution — shared with the Space preview so they load once.
 - **Drag files out** of Delight into Finder, Mail, or any app (a copy — never a move).
 - **Favorites** dropdown per pane (**⌘1** / **⌘2**), keyboard-navigable and drag-reorderable. Your Dropbox folder is added automatically if you have one.
 
 **Polish**
 - Light / dark / system themes, browser-style zoom, show/hide dotfiles.
-- Size bars behind file sizes (linear or logarithmic), recency tint for files touched today/yesterday, optional real macOS file icons.
+- Size bars behind file sizes (linear or logarithmic), recency tint (**Now / today / yesterday**), optional real macOS file icons.
+- Keyboard navigation suppresses the mouse-hover highlight, so only the cursor row reads as active.
 - Display all names in original / lowercase / UPPERCASE.
 - **Fully configurable keyboard shortcuts** in a dedicated Shortcuts tab.
 - Remembers window size and position; opens at 80% of the screen the first time.
@@ -59,17 +68,18 @@ Defaults:
 | Keys | Action |
 | --- | --- |
 | ⌘T / ⌘W | New / close tab |
-| ⌘⇧[ · ⌘⇧] · ⌃⇥ | Switch tabs |
+| ⌘⇧[ · ⌘⇧] · ⌃⇥ · ⌘` | Switch / cycle tabs (skips Settings) |
+| ⌘L / ⌘C / ⌘I | List / Chips / Icons view |
 | ⌘, | Settings |
 | Tab | Switch active pane |
-| ↑ ↓ · PgUp PgDn · Home End | Move cursor |
+| ↑ ↓ · PgUp PgDn · Home End · ⌘↑ ⌘↓ | Move cursor / jump to top / bottom |
 | → ← | Expand / collapse folder (list view) |
 | ⇧↑ / ⇧↓ · ⌘A | Extend selection / select all |
 | Enter · double-click | Open (folder or default app) |
 | Backspace | Go up a folder |
 | Space | Preview |
 | ⌘1 / ⌘2 | Favorites — left / right pane |
-| ⌘N ⌘E ⌘S ⌘C ⌘M | Sort by name / ext / size / created / modified |
+| ⌘N ⌘E ⌘S ⌘⇧C ⌘M | Sort by name / ext / size / created / modified |
 | ⌘+ ⌘− ⌘0 | Zoom in / out / reset |
 | ⌘⇧. | Show / hide hidden files |
 | ⌥⌘I | Developer tools (when enabled) |

@@ -42,8 +42,8 @@ browser. `isTauri` gates native-only calls.
 | File | Role |
 | --- | --- |
 | `main.ts` | App shell: tabs (files + system tabs), tab bar / integrated titlebar, keyboard wiring, settings + shortcuts tab hosting, per-pane `PaneHost`, restore/persist, orchestration of preview / favorites / sort-link / column-link. |
-| `pane.ts` | `PaneView` — the core. One directory pane: list/grid/chips rendering (all **virtualized**), sorting, tree disclosure, selection, drag-out, columns (order/resize/visibility), size bars, recency, opposite-pane preview, favorites dropdown. Big file; most feature work lands here. |
-| `state.ts` | Global `state` (tabs, settings, locations, keybindings, columnOrder, …), defaults, debounced `persist()` → `save_state`, `normalizeColumnOrder`. |
+| `pane.ts` | `PaneView` — the core. One directory pane: list/grid/chips rendering (all **virtualized**), sorting, tree disclosure, selection (incl. icon-view marquee), drag-out, columns (order/resize/visibility), size bars, recency, preview icons, opposite-pane preview, favorites dropdown, on-disk auto-refresh watcher. Big file; most feature work lands here. |
+| `state.ts` | Global `state` (tabs, settings, locations, keybindings, `columnOrder` + `columnWidths`, …), defaults, debounced `persist()` → `save_state`, `normalizeColumnOrder`. |
 | `types.ts` | All shared types: `Entry`, `Listing`, `Details`, `Settings`, `PaneState`, `ColKey`/`COL_KEYS`, `SortKey`, etc. |
 | `commands.ts` | Keyboard **command registry** + combo encode/label helpers (`comboFromEvent`, `comboLabel`, `mergeKeybindings`). Add a shortcut here. |
 | `keyboard.ts` | Global keydown handler: encodes the combo, looks it up in the effective bindings, runs the command. Text-field guard + native-edit passthrough (⌘C/X/V/A/Z). |
@@ -75,8 +75,11 @@ browser. `isTauri` gates native-only calls.
 - **Keybindings:** every shortcut is a `Command` in `commands.ts`. To add one: add the id to `CommandId`, an entry to `COMMANDS` (label, group, default combo), and a handler in `main.ts`'s `commandHandlers`. `main.ts` builds a combo→id map; the Shortcuts tab edits `state.keybindings`.
 - **Selection model** (`pane.ts`): `selection: Set<number>` (view indices) + `anchor`; `..` (UP_ENTRY) is never selectable. Plain-click on an already-multiselected row defers to mouseup so a drag can carry the whole set. Persisted-by-identity across sort via row `key`.
 - **Drag-out:** `dragstart` on the row layer gathers selected absolute paths and calls `tauri-plugin-drag`'s `startDrag` (native `NSDraggingSession`). Read-only copy. `icon` must be a `data:image/png;base64,...` URI (generated on a canvas).
-- **Columns:** order = `state.columnOrder` (linked) or `PaneState.colOrder` (per-pane, when `linkedColumns` off). `pane.ts columns()` filters by visibility + maps to descriptors; the row and header build from the same list; `--grid-cols` sets the CSS grid.
-- **Views** are all virtualized in `pane.ts` (list rows, grid tiles, chips accordion where only the cursor item is a tall chip via `expandedIndex()`).
+- **Columns:** ONE global spec — `state.columnOrder` + `state.columnWidths`, shared by every pane and tab. Reorder or resize anywhere → write global + `host.columnsChanged()` refreshes all panes. `pane.ts buildCells()` builds the ordered cells once; both list rows AND the compact chips rows use it, so they share the exact same columns (incl. Perms) and align under one header. `--grid-cols` + `--w-*` set the CSS grid. (The old per-pane `colOrder`/`colWidths` + `linkedColumns` toggle were removed; `PaneState` still carries the now-unused fields.)
+- **Views** are all virtualized in `pane.ts` (list rows, grid tiles, chips accordion where only the cursor item is a tall chip via `expandedIndex()`). Default view is **chips + Bigger chips** (`state.settings.bigChips`, on by default; `chipH()` ~2×, `.big-chips` CSS lays out the big preview + 2-row detail tiles).
+- **Icon-view marquee** (`pane.ts onMarqueeMouseDown`/`applyMarquee`): drag on empty grid space rubber-bands a selection (cells intersecting the rect, in content coords). A `requestAnimationFrame` loop auto-scrolls when the pointer nears/leaves the top/bottom edge and keeps extending the selection — so it can't be verified in a backgrounded preview tab (rAF is paused there; drive `scrollTop` manually to test).
+- **Preview icons** (`applyPreviewIcon`, `previewIcons` setting): render a file's QuickLook content thumbnail as its list/grid icon (Finder-style, with a hairline outline in list), falling back to the system/vector icon when there's no preview. Uses the same `sysicons.ts` thumbnail cache (keyed by px size) as the Space preview, so the chip preview and Space preview share loads when `previewSize` matches.
+- **Opposite-pane preview** persists across folder changes: the pane host's `changed()` **refreshes** the preview to the new cursor item instead of closing it (Finder-like). It closes only on tab switch or when you click the previewing pane.
 
 ## Testing / verification
 
@@ -113,11 +116,12 @@ start on Windows/Linux, these are the known gaps — most degrade gracefully:
 
 | Area | macOS | Windows | Linux | Notes |
 | --- | --- | --- | --- | --- |
-| Directory listing, nav, sort, columns, tabs, selection, favorites, size bars, themes, zoom, keybindings, window-state | ✅ | should work | should work | Pure-Rust `std::fs` + portable frontend. **Test first.** |
+| Directory listing, nav, sort, columns (global spec), tabs, selection (incl. icon marquee + auto-scroll), favorites, size bars, themes, zoom, window-state | ✅ | should work | should work | Pure-Rust `std::fs` + portable frontend. **Test first.** |
+| Keyboard shortcuts (`Meta`-based combos) | ✅ ⌘ | ⚠️ | ⚠️ | Defaults use `Meta` (= ⌘ on macOS, but the Win/Super key elsewhere). On Win/Linux the `Meta+*` defaults in `commands.ts` should map to `Ctrl+*` — remap the defaults per-OS or in `comboFromEvent`. Rebindable in the Shortcuts tab regardless. |
 | `perm_string` (Permissions column) | ✅ rwx | ⚠️ returns `None` | ✅ rwx | Windows has no rwx; hide the column or show ACL summary. |
 | `created` time | ✅ | ✅ | ⚠️ | `metadata().created()` is unsupported on some Linux FS → `None`. |
 | System file icons (`icons.rs`) | ✅ NSWorkspace | ❌ stub | ❌ stub | Falls back to vector icons. Win: `SHGetFileInfo`; Linux: icon-theme lookup. |
-| Preview thumbnails (`file_thumbnail` via `qlmanage`) | ✅ | ❌ | ❌ | Opposite-pane preview shows only the icon without them. Win: `IThumbnailProvider`/`IShellItemImageFactory`; Linux: thumbnailers / Gio. |
+| Preview thumbnails (`file_thumbnail` via `qlmanage`) | ✅ | ❌ | ❌ | Powers the opposite-pane preview, the chip preview, AND the **Preview icons** setting (thumbnails in list/grid = one `qlmanage` spawn per visible file, cached by path+size). All fall back to the plain icon without it. Win: `IThumbnailProvider`/`IShellItemImageFactory`; Linux: thumbnailers / Gio. |
 | Quick Look window (Space fallback, `quicklook.m` + `actions.rs`) | ✅ | ❌ | ❌ | macOS-only. On other OSes only the in-pane preview makes sense. |
 | "Opens with <app>" in chips (`default_app`) | ✅ | ❌ | ❌ | Win: `AssocQueryString`; Linux: `.desktop` / `xdg-mime`. |
 | `dropbox_dir` | ✅ `~/.dropbox/info.json` | ⚠️ | ✅ | Windows stores it at `%APPDATA%\Dropbox\info.json` — add that path. |

@@ -18,7 +18,7 @@ export const state = {
     lowercaseTabs: false,
     systemIcons: false,
     chipCards: false,
-    bigChips: false,
+    bigChips: true,
     previewIcons: false,
     highlightToday: true,
     sizeBars: true,
@@ -29,11 +29,12 @@ export const state = {
     showPermissions: false,
     nameCase: "original",
     linkedSort: true,
-    linkedColumns: true,
     devTools: false,
   } as Settings,
-  // Shared (linked) list-view column order.
+  // One global list-view column spec (order + widths), shared across every
+  // pane and tab: resizing or reordering in one place updates everywhere.
   columnOrder: [...COL_KEYS] as ColKey[],
+  columnWidths: { ext: 3.25, size: 5.25, created: 8.5, perms: 6, mod: 8.5 },
   // Global "Finder sidebar" locations, shared across panes/tabs.
   locations: [] as Location[],
   // Effective keyboard bindings: command id -> combo strings. Seeded from
@@ -78,6 +79,7 @@ export function persist(): void {
       locations: state.locations,
       keybindings: state.keybindings,
       columnOrder: state.columnOrder,
+      columnWidths: state.columnWidths,
       dropboxSeeded: state.dropboxSeeded,
       tabs: state.tabs.map((t) => ({
         kind: t.kind,

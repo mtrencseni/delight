@@ -8,6 +8,7 @@ export type CommandId =
   | "closeTab"
   | "nextTab"
   | "prevTab"
+  | "cycleTabs"
   | "openSettings"
   | "switchPane"
   | "cursorUp"
@@ -28,6 +29,9 @@ export type CommandId =
   | "sortSize"
   | "sortCreated"
   | "sortModified"
+  | "viewList"
+  | "viewChips"
+  | "viewGrid"
   | "zoomIn"
   | "zoomOut"
   | "zoomReset"
@@ -52,6 +56,7 @@ export const COMMANDS: Command[] = [
   { id: "closeTab", label: "Close tab", group: "Tabs", defaults: ["Meta+KeyW"] },
   { id: "nextTab", label: "Next tab", group: "Tabs", defaults: ["Meta+Shift+BracketRight", "Ctrl+Tab"] },
   { id: "prevTab", label: "Previous tab", group: "Tabs", defaults: ["Meta+Shift+BracketLeft", "Ctrl+Shift+Tab"] },
+  { id: "cycleTabs", label: "Cycle tabs", group: "Tabs", defaults: ["Meta+Backquote"] },
   { id: "openSettings", label: "Open settings", group: "Tabs", defaults: ["Meta+Comma"] },
 
   // Panes & navigation
@@ -76,10 +81,14 @@ export const COMMANDS: Command[] = [
   { id: "sortName", label: "Sort by name", group: "Sorting", defaults: ["Meta+KeyN"] },
   { id: "sortExt", label: "Sort by extension", group: "Sorting", defaults: ["Meta+KeyE"] },
   { id: "sortSize", label: "Sort by size", group: "Sorting", defaults: ["Meta+KeyS"] },
-  { id: "sortCreated", label: "Sort by created", group: "Sorting", defaults: ["Meta+KeyC"] },
+  // ⌘C is the Chips-view shortcut; sort-by-created moved to ⌘⇧C.
+  { id: "sortCreated", label: "Sort by created", group: "Sorting", defaults: ["Meta+Shift+KeyC"] },
   { id: "sortModified", label: "Sort by modified", group: "Sorting", defaults: ["Meta+KeyM"] },
 
   // View
+  { id: "viewList", label: "List view", group: "View", defaults: ["Meta+KeyL"] },
+  { id: "viewChips", label: "Chips view", group: "View", defaults: ["Meta+KeyC"] },
+  { id: "viewGrid", label: "Icon view", group: "View", defaults: ["Meta+KeyI"] },
   { id: "zoomIn", label: "Zoom in", group: "View", defaults: ["Meta+Equal", "Meta+NumpadAdd"] },
   { id: "zoomOut", label: "Zoom out", group: "View", defaults: ["Meta+Minus", "Meta+NumpadSubtract"] },
   { id: "zoomReset", label: "Reset zoom", group: "View", defaults: ["Meta+Digit0", "Meta+Numpad0"] },
@@ -200,6 +209,12 @@ export function mergeKeybindings(saved: unknown): Record<CommandId, string[]> {
         ([cid, combos]) => cid !== id && combos.includes(combo)
       );
       if (!usedElsewhere && !base[id].includes(combo)) base[id].push(combo);
+    }
+    // ⌘C used to be "sort by created" but is now the Chips-view shortcut. If a
+    // saved config still holds the old ⌘C-only binding, move sort-created to ⌘⇧C
+    // so ⌘C is free for viewChips (whose default we then leave intact).
+    if (base.sortCreated.length === 1 && base.sortCreated[0] === "Meta+KeyC") {
+      base.sortCreated = ["Meta+Shift+KeyC"];
     }
   }
   return base;
