@@ -14,6 +14,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             fs_cmds::list_dir,
             fs_cmds::home_dir,
+            fs_cmds::dir_mtime,
             icons::file_icon,
             details::item_details,
             details::file_thumbnail,

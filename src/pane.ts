@@ -209,6 +209,20 @@ export class PaneView {
 
     this.el.append(bar, this.errBox, this.header, this.scroller, this.previewEl, status);
     this.el.addEventListener("mousedown", () => this.host.activate(this));
+    // Keyboard navigation suppresses the mouse-hover highlight (it's confusing to
+    // see two highlighted rows — the cursor and whatever the idle pointer sits on).
+    // The next real pointer move re-enables hover. Guard on coordinates: a
+    // keyboard jump that scrolls the list changes the element under a *stationary*
+    // pointer, which makes WebKit fire a synthetic mousemove with UNCHANGED
+    // coordinates — ignore those, or the just-scrolled-to row would light up.
+    let lastPX = -1;
+    let lastPY = -1;
+    this.el.addEventListener("mousemove", (e) => {
+      if (e.clientX === lastPX && e.clientY === lastPY) return;
+      lastPX = e.clientX;
+      lastPY = e.clientY;
+      this.el.classList.remove("kb-nav");
+    });
 
     this.pathInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
@@ -238,6 +252,58 @@ export class PaneView {
     this.rowLayer.addEventListener("dragstart", (e) => this.onDragStart(e));
 
     this.applyViewMode();
+    this.startWatch();
+  }
+
+  // ---- auto-refresh: re-list when the current folder changes on disk ----------
+  private watchTimer = 0;
+  private watchPath = "";
+  private watchMtime: number | null = null;
+
+  /** Poll the current directory's mtime; re-list (preserving cursor/selection/
+      scroll) when it changes — e.g. a file is added while we're viewing it. */
+  private startWatch(): void {
+    if (!isTauri) return;
+    this.watchTimer = window.setInterval(() => void this.checkDirChanged(), 1500);
+    // Refocusing the app is the common "I did something elsewhere" moment —
+    // check immediately rather than waiting for the next poll tick.
+    window.addEventListener("focus", () => void this.checkDirChanged());
+  }
+
+  private async checkDirChanged(): Promise<void> {
+    const path = this.st.path;
+    if (!path) return;
+    // Don't reload out from under an active interaction.
+    if (document.activeElement === this.pathInput) return;
+    const m = await invoke<number | null>("dir_mtime", { path }).catch(() => null);
+    if (path !== this.watchPath) {
+      // Directory changed (navigation) — adopt its mtime without reloading.
+      this.watchPath = path;
+      this.watchMtime = m;
+      return;
+    }
+    if (m != null && this.watchMtime != null && m !== this.watchMtime) {
+      this.watchMtime = m;
+      void this.softReload();
+    } else {
+      this.watchMtime = m;
+    }
+  }
+
+  /** Re-fetch the current directory and rebuild, keeping cursor, selection and
+      scroll position (unlike navigate, which resets them). */
+  async softReload(): Promise<void> {
+    if (!this.st.path) return;
+    try {
+      const scroll = this.scroller.scrollTop;
+      const l = await invoke<Listing>("list_dir", { path: this.st.path, child: null });
+      this.st.listing = l;
+      this.rebuild(true);
+      this.scroller.scrollTop = scroll;
+      this.host.changed();
+    } catch {
+      // dir vanished / unreadable — leave the pane as-is
+    }
   }
 
   private isGrid(): boolean {
@@ -606,6 +672,7 @@ export class PaneView {
 
   /** Right-arrow: grid → next item; list → expand (or step into) a dir. */
   expandCursor(): void {
+    this.markKbNav();
     if (this.isChips()) return;
     if (this.isGrid()) {
       this.setCursor(this.st.cursor + 1);
@@ -623,6 +690,7 @@ export class PaneView {
 
   /** Left-arrow: grid → previous item; list → collapse (or hop to parent). */
   collapseCursor(): void {
+    this.markKbNav();
     if (this.isChips()) return;
     if (this.isGrid()) {
       this.setCursor(this.st.cursor - 1);
@@ -664,6 +732,7 @@ export class PaneView {
     this.el.classList.toggle("grid", this.isGrid());
     this.el.classList.toggle("chips", this.isChips());
     this.el.classList.toggle("chip-cards", this.isChips() && state.settings.chipCards);
+    this.el.classList.toggle("big-chips", this.isChips() && state.settings.bigChips);
     for (const [mode, btn] of this.viewBtns) btn.classList.toggle("on", mode === this.st.viewMode);
   }
 
@@ -892,7 +961,9 @@ export class PaneView {
     // Folders carry an extra peek line, so they need a touch more height.
     const en = this.view[this.st.cursor]?.entry;
     const tall = !!en && en !== UP_ENTRY && en.isDir;
-    return this.remPx() * (tall ? 8.5 : 7.25);
+    const base = tall ? 8.5 : 7.25;
+    // "Bigger chips" ~3× the height so the content preview is far more visible.
+    return this.remPx() * (state.settings.bigChips ? base * 3 : base);
   }
   private chipOffset(i: number): number {
     const rh = this.compactRowH();
@@ -948,7 +1019,13 @@ export class PaneView {
   private recencyName(ms: number | null): string {
     if (!state.settings.highlightToday) return "";
     const r = recency(ms);
-    return r === "today" ? "is-today" : r === "yesterday" ? "is-yesterday" : "";
+    return r === "justnow"
+      ? "is-justnow"
+      : r === "today"
+        ? "is-today"
+        : r === "yesterday"
+          ? "is-yesterday"
+          : "";
   }
 
   /** Class suffix (with leading space) for an entry's modified time. */
@@ -964,16 +1041,47 @@ export class PaneView {
     return n ? ` ${n}` : "";
   }
 
-  private iconInto(ic: HTMLElement, en: Entry, dirPath: string): void {
-    if (en === UP_ENTRY) ic.innerHTML = icons.up;
-    else if (en.isSymlink) ic.innerHTML = icons.symlink;
+  /** Render an entry's icon into `ic`. When `thumbPx > 0` and "Preview icons" is
+      on, files get their QuickLook content thumbnail (Finder-style), falling back
+      to a system/vector icon when there's no previewable content. `thumbPx = 0`
+      (the default) means never fetch a thumbnail — used for tiny nested icons. */
+  private iconInto(ic: HTMLElement, en: Entry, dirPath: string, thumbPx = 0): void {
+    if (en === UP_ENTRY) {
+      ic.innerHTML = icons.up;
+      return;
+    }
+    if (en.isSymlink) ic.innerHTML = icons.symlink;
     else if (en.isDir) ic.innerHTML = icons.folder;
     else {
       const ft = fileIcon(en.ext);
       ic.classList.add(`type-${ft.cls}`);
       ic.innerHTML = ft.svg;
     }
-    if (en !== UP_ENTRY && this.host.sysIcons()) this.applySystemIcon(ic, en, dirPath);
+    if (thumbPx > 0 && !en.isDir && state.settings.previewIcons) {
+      this.applyPreviewIcon(ic, en, dirPath, thumbPx);
+    } else if (this.host.sysIcons()) {
+      this.applySystemIcon(ic, en, dirPath);
+    }
+  }
+
+  /** Finder-style content thumbnail for a file, with a system/vector fallback
+      when the file has no previewable content (QuickLook returns null). */
+  private applyPreviewIcon(ic: HTMLElement, en: Entry, dirPath: string, size: number): void {
+    const sysFallback = this.host.sysIcons();
+    const cached = cachedThumbnail(dirPath, en.name, size);
+    if (cached) {
+      this.setSysImg(ic, cached);
+      return;
+    }
+    if (cached === null) {
+      if (sysFallback) this.applySystemIcon(ic, en, dirPath);
+      return;
+    }
+    void fetchThumbnail(dirPath, en.name, size).then((uri) => {
+      if (!ic.isConnected) return;
+      if (uri) this.setSysImg(ic, uri);
+      else if (sysFallback) this.applySystemIcon(ic, en, dirPath);
+    });
   }
 
   private buildRow(i: number, rh: number): HTMLElement {
@@ -983,7 +1091,7 @@ export class PaneView {
         (en.isDir ? " is-dir" : "") +
         (en.isSymlink ? " is-link" : "") +
         (en.hidden ? " is-hidden" : "") +
-        (this.selection.has(i) ? " is-selected" : "")
+        this.selClass(i)
     );
     row.style.top = `${i * rh}px`;
     row.dataset.i = String(i);
@@ -1001,7 +1109,7 @@ export class PaneView {
     }
 
     const ic = div("ficon");
-    this.iconInto(ic, en, dirPath);
+    this.iconInto(ic, en, dirPath, 128);
 
     const label = document.createElement("span");
     label.className = "fname";
@@ -1045,7 +1153,7 @@ export class PaneView {
         (en.isDir ? " is-dir" : "") +
         (en.isSymlink ? " is-link" : "") +
         (en.hidden ? " is-hidden" : "") +
-        (this.selection.has(i) ? " is-selected" : "")
+        this.selClass(i)
     );
     tile.dataset.i = String(i);
     tile.draggable = en !== UP_ENTRY;
@@ -1053,7 +1161,7 @@ export class PaneView {
 
     const ic = div("ficon gridicon");
     ic.style.cssText = `width:${this.st.gridSize}px;height:${this.st.gridSize}px`;
-    this.iconInto(ic, en, dirPath);
+    this.iconInto(ic, en, dirPath, 256);
 
     const label = document.createElement("span");
     label.className = "fname";
@@ -1072,7 +1180,7 @@ export class PaneView {
         (en.isDir ? " is-dir" : "") +
         (en.isSymlink ? " is-link" : "") +
         (en.hidden ? " is-hidden" : "") +
-        (this.selection.has(i) ? " is-selected" : "") // e.g. cursor on ".."
+        this.selClass(i) // includes the cursor resting on ".."
     );
     row.dataset.i = String(i);
     row.draggable = en !== UP_ENTRY;
@@ -1168,13 +1276,17 @@ export class PaneView {
     const tiles = div("chtiles");
     const modStr = fmtDateCompact(en.modifiedMs);
     const modTile = mk("Modified", "modified", modStr, this.recencyClass(en));
+    // Order: Size · Owner · Created · Modified. In "Bigger chips" the .chtiles grid
+    // is 2-wide (styles.css), so these wrap to row 1 = Size·Owner, row 2 = Created·Modified.
+    const ownerTile = mk("Owner", "owner", "…");
+    const createdTile = mk("Created", "created", "…");
     if (en.isDir) {
-      tiles.append(mk("Items", "items", "…"), mk("Created", "created", "…"), modTile, mk("Owner", "owner", "…"));
+      tiles.append(mk("Items", "items", "…"), ownerTile, createdTile, modTile);
     } else {
       const sizeTile = mk("Size", "size", humanSize(en.size));
       sizeTile.classList.add("sizecell");
       this.appendSizeBar(sizeTile, en);
-      tiles.append(sizeTile, mk("Created", "created", "…"), modTile, mk("Owner", "owner", "…"));
+      tiles.append(sizeTile, ownerTile, createdTile, modTile);
     }
     body.append(tiles);
     if (en.isDir) {
@@ -1224,7 +1336,7 @@ export class PaneView {
     // Same recency tint as Modified, based on the created time.
     const createdEl = chip.querySelector<HTMLElement>('[data-field="created"]');
     if (createdEl) {
-      createdEl.classList.remove("is-today", "is-yesterday");
+      createdEl.classList.remove("is-justnow", "is-today", "is-yesterday");
       const n = this.recencyName(d.createdMs);
       if (n) createdEl.classList.add(n);
     }
@@ -1342,6 +1454,15 @@ export class PaneView {
     return !!r && r.entry !== UP_ENTRY;
   }
 
+  /** Highlight class for a row: the real selection, plus the cursor when it
+      rests on ".." — which is never in the selection set but should still show
+      as focused (arrow-to-it / click-it). */
+  private selClass(i: number): string {
+    if (this.selection.has(i)) return " is-selected";
+    if (i === this.st.cursor && this.view[i]?.entry === UP_ENTRY) return " is-selected";
+    return "";
+  }
+
   private selectSingle(i: number, ensure = true): void {
     const c = this.clampIndex(i);
     this.st.cursor = c;
@@ -1380,6 +1501,7 @@ export class PaneView {
 
   /** ⇧-Arrow: keep the anchor, move the cursor, and grow/shrink the range. */
   extendCursor(d: number): void {
+    this.markKbNav();
     const step = this.isGrid() ? this.gridCols() : 1;
     this.selectToAnchor(this.st.cursor + d * step);
   }
@@ -1571,13 +1693,21 @@ export class PaneView {
     return true;
   }
 
+  /** Flag that the cursor moved by keyboard, so hover highlight stays suppressed
+      until the pointer actually moves again (see the mousemove listener). */
+  private markKbNav(): void {
+    this.el.classList.add("kb-nav");
+  }
+
   /** Up/down: one row in list/chips, one grid-row (± columns) in grid. */
   moveCursor(d: number): void {
+    this.markKbNav();
     const step = this.isGrid() ? this.gridCols() : 1;
     this.setCursor(this.st.cursor + d * step);
   }
 
   movePage(d: 1 | -1): void {
+    this.markKbNav();
     const s = this.scroller;
     let per: number;
     if (this.isGrid())
@@ -1589,10 +1719,12 @@ export class PaneView {
   }
 
   moveHome(): void {
+    this.markKbNav();
     this.setCursor(0);
   }
 
   moveEnd(): void {
+    this.markKbNav();
     this.setCursor(this.view.length - 1);
   }
 

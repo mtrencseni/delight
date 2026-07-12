@@ -10,17 +10,26 @@ export function humanSize(n: number): string {
   return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
 }
 
+const THIRTY_MIN = 30 * 60 * 1000;
+
+/** Modified within the last 30 minutes (the "Just now" tier). */
+function isJustNow(ms: number): boolean {
+  const dt = Date.now() - ms;
+  return dt >= 0 && dt < THIRTY_MIN;
+}
+
 export function fmtDate(ms: number | null): string {
   if (ms == null) return "";
   const d = new Date(ms);
   const p = (x: number) => String(x).padStart(2, "0");
   const time = `${p(d.getHours())}:${p(d.getMinutes())}`;
+  if (isJustNow(ms)) return `Now at ${time}`;
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const DAY = 86400000;
   if (ms >= startOfToday && ms < startOfToday + DAY) return `Today at ${time}`;
   if (ms >= startOfToday - DAY && ms < startOfToday) return `Yesterday at ${time}`;
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${time}`;
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} at ${time}`;
 }
 
 /** Compact date for the narrow chip tiles: "Today", "Yesterday", "May 30",
@@ -40,8 +49,9 @@ export function fmtDateCompact(ms: number | null): string {
   return d.toLocaleDateString(undefined, opts);
 }
 
-export function recency(ms: number | null): "today" | "yesterday" | null {
+export function recency(ms: number | null): "justnow" | "today" | "yesterday" | null {
   if (ms == null) return null;
+  if (isJustNow(ms)) return "justnow";
   const now = new Date();
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const DAY = 86400000;

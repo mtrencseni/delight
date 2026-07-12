@@ -62,8 +62,8 @@ export const COMMANDS: Command[] = [
   { id: "collapse", label: "Collapse / to parent", group: "Panes & navigation", defaults: ["ArrowLeft"] },
   { id: "pageUp", label: "Page up", group: "Panes & navigation", defaults: ["PageUp"] },
   { id: "pageDown", label: "Page down", group: "Panes & navigation", defaults: ["PageDown"] },
-  { id: "cursorHome", label: "Jump to top", group: "Panes & navigation", defaults: ["Home"] },
-  { id: "cursorEnd", label: "Jump to bottom", group: "Panes & navigation", defaults: ["End"] },
+  { id: "cursorHome", label: "Jump to top", group: "Panes & navigation", defaults: ["Home", "Meta+ArrowUp"] },
+  { id: "cursorEnd", label: "Jump to bottom", group: "Panes & navigation", defaults: ["End", "Meta+ArrowDown"] },
   { id: "open", label: "Open", group: "Panes & navigation", defaults: ["Enter"] },
   { id: "up", label: "Go up a folder", group: "Panes & navigation", defaults: ["Backspace"] },
 
@@ -187,6 +187,19 @@ export function mergeKeybindings(saved: unknown): Record<CommandId, string[]> {
     for (const c of COMMANDS) {
       const v = s[c.id];
       if (Array.isArray(v) && v.every((x) => typeof x === "string")) base[c.id] = v as string[];
+    }
+    // Persisted configs store the FULL binding set, so newly-added default
+    // shortcuts stay shadowed by an older snapshot. Adopt the ⌘↑ / ⌘↓
+    // "jump to top/bottom" combos for configs that predate them — but only if
+    // the user hasn't since bound that combo to some other command.
+    for (const [id, combo] of [
+      ["cursorHome", "Meta+ArrowUp"],
+      ["cursorEnd", "Meta+ArrowDown"],
+    ] as const) {
+      const usedElsewhere = (Object.entries(base) as [CommandId, string[]][]).some(
+        ([cid, combos]) => cid !== id && combos.includes(combo)
+      );
+      if (!usedElsewhere && !base[id].includes(combo)) base[id].push(combo);
     }
   }
   return base;

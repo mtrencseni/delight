@@ -168,6 +168,8 @@ class App {
       if (typeof s.lowercaseTabs === "boolean") state.settings.lowercaseTabs = s.lowercaseTabs;
       if (typeof s.systemIcons === "boolean") state.settings.systemIcons = s.systemIcons;
       if (typeof s.chipCards === "boolean") state.settings.chipCards = s.chipCards;
+      if (typeof s.bigChips === "boolean") state.settings.bigChips = s.bigChips;
+      if (typeof s.previewIcons === "boolean") state.settings.previewIcons = s.previewIcons;
       if (typeof s.highlightToday === "boolean") state.settings.highlightToday = s.highlightToday;
       if (typeof s.sizeBars === "boolean") state.settings.sizeBars = s.sizeBars;
       if (typeof s.sizeBarLog === "boolean") state.settings.sizeBarLog = s.sizeBarLog;
@@ -396,6 +398,17 @@ class App {
       onChipCards: (v) => {
         state.settings.chipCards = v;
         for (const view of this.views.values()) view.panes?.forEach((p) => p.refreshView());
+        persist();
+      },
+      onBigChips: (v) => {
+        state.settings.bigChips = v;
+        for (const view of this.views.values()) view.panes?.forEach((p) => p.refreshView());
+        persist();
+      },
+      onPreviewIcons: (v) => {
+        state.settings.previewIcons = v;
+        // Re-render visible rows in every pane so thumbnails appear/disappear.
+        for (const view of this.views.values()) view.panes?.forEach((p) => p.renderRows());
         persist();
       },
       onHighlightToday: (v) => {

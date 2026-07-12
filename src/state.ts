@@ -18,6 +18,8 @@ export const state = {
     lowercaseTabs: false,
     systemIcons: false,
     chipCards: false,
+    bigChips: false,
+    previewIcons: false,
     highlightToday: true,
     sizeBars: true,
     sizeBarLog: false,

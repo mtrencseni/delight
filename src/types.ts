@@ -83,6 +83,10 @@ export interface Settings {
   systemIcons: boolean;
   /** In chips view: render every row as a card (vs a compact accordion). */
   chipCards: boolean;
+  /** In chips view: 3× taller expanded chip with a big preview + 2 rows of details. */
+  bigChips: boolean;
+  /** Render file content thumbnails (QuickLook) in list & icon views, like Finder. */
+  previewIcons: boolean;
   /** Tint the modified time green for files changed today. */
   highlightToday: boolean;
   /** Show a proportional data bar behind file sizes. */

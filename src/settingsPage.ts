@@ -10,6 +10,8 @@ export interface SettingsHooks {
   onLowercaseTabs(v: boolean): void;
   onSystemIcons(v: boolean): void;
   onChipCards(v: boolean): void;
+  onBigChips(v: boolean): void;
+  onPreviewIcons(v: boolean): void;
   onHighlightToday(v: boolean): void;
   onSizeBars(v: boolean): void;
   onSizeBarLog(v: boolean): void;
@@ -102,6 +104,7 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
   const hiddenSw = makeSwitch(() => hooks.get().showHidden, hooks.onHidden);
   const lowerSw = makeSwitch(() => hooks.get().lowercaseTabs, hooks.onLowercaseTabs);
   const sysIconSw = makeSwitch(() => hooks.get().systemIcons, hooks.onSystemIcons);
+  const previewIconSw = makeSwitch(() => hooks.get().previewIcons, hooks.onPreviewIcons);
   const createdColSw = makeSwitch(() => hooks.get().showCreated, hooks.onShowCreated);
   const permsColSw = makeSwitch(() => hooks.get().showPermissions, hooks.onShowPermissions);
   const linkedSortSw = makeSwitch(() => hooks.get().linkedSort, hooks.onLinkedSort);
@@ -124,6 +127,7 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     caseSeg.append(b);
   }
   const chipCardsSw = makeSwitch(() => hooks.get().chipCards, hooks.onChipCards);
+  const bigChipsSw = makeSwitch(() => hooks.get().bigChips, hooks.onBigChips);
   const todaySw = makeSwitch(() => hooks.get().highlightToday, hooks.onHighlightToday);
   const sizeBarsSw = makeSwitch(() => hooks.get().sizeBars, hooks.onSizeBars);
   const sizeBarLogSw = makeSwitch(() => hooks.get().sizeBarLog, hooks.onSizeBarLog);
@@ -166,6 +170,7 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
   section(
     "Files",
     row("System file icons", "Use macOS icons instead of Delight's vector set", sysIconSw),
+    row("Preview icons", "Show file content thumbnails in list & icon views, like Finder", previewIconSw),
     row("Preview in opposite pane", "Space previews the file in the other pane instead of a Quick Look window", previewPaneSw),
     row("Preview resolution", "Thumbnail size (px) for the opposite-pane preview", sizeSeg),
     row("Highlight recent files", "Green modified time for today, paler for yesterday", todaySw),
@@ -197,7 +202,8 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
 
   section(
     "Chips view",
-    row("Card rows", "Show every row as a card instead of a compact accordion", chipCardsSw)
+    row("Card rows", "Show every row as a card instead of a compact accordion", chipCardsSw),
+    row("Bigger chips", "3× taller expanded chip with a large preview and two rows of details", bigChipsSw)
   );
 
   section(
@@ -217,7 +223,9 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     setSwitch(hiddenSw, s.showHidden);
     setSwitch(lowerSw, s.lowercaseTabs);
     setSwitch(sysIconSw, s.systemIcons);
+    setSwitch(previewIconSw, s.previewIcons);
     setSwitch(chipCardsSw, s.chipCards);
+    setSwitch(bigChipsSw, s.bigChips);
     setSwitch(todaySw, s.highlightToday);
     setSwitch(sizeBarsSw, s.sizeBars);
     setSwitch(sizeBarLogSw, s.sizeBarLog);

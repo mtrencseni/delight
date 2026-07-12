@@ -7,7 +7,7 @@ look-alike).
 > **v0.1 — macOS. Strictly read-only:** Delight never creates, moves, renames,
 > or deletes your files. The only thing it writes is its own settings.
 
-<!-- Add a screenshot here once you have one: ![Delight](docs/screenshot.png) -->
+![Delight Commander](docs/screenshot.png)
 
 ## Features
 

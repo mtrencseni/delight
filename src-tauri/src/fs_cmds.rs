@@ -166,3 +166,17 @@ pub fn home_dir(app: tauri::AppHandle) -> Result<String, String> {
         .map(|p| p.to_string_lossy().into_owned())
         .map_err(|e| e.to_string())
 }
+
+/// A directory's modified time in epoch millis. Bumps whenever an entry is
+/// added or removed (used by the frontend to auto-refresh a pane when its
+/// folder changes on disk). Read-only stat; None if the dir is gone/unreadable.
+#[tauri::command]
+pub fn dir_mtime(path: String) -> Option<u64> {
+    std::fs::metadata(&path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_millis() as u64)
+}
