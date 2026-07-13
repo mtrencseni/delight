@@ -85,6 +85,11 @@ export interface Settings {
   chipCards: boolean;
   /** In chips view: 3× taller expanded chip with a big preview + 2 rows of details. */
   bigChips: boolean;
+  /** In chips view: expand folders into a chip too (off = folders stay plain rows). */
+  folderChips: boolean;
+  /** Treat `.app` bundles as launchable (open on double-click, can't enter). Off =
+      Explore mode: browse them as ordinary folders. */
+  launchApps: boolean;
   /** Render file content thumbnails (QuickLook) in list & icon views, like Finder. */
   previewIcons: boolean;
   /** Tint the modified time green for files changed today. */

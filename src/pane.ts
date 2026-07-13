@@ -548,6 +548,22 @@ export class PaneView {
     return c === "lower" ? s.toLowerCase() : c === "upper" ? s.toUpperCase() : s;
   }
 
+  /** Set a name label. For a launchable `.app` the ".app" suffix is split into a
+      very-pale span so the app reads by its base name. `normal` is the text used
+      for every other entry (varies by view — stem in list, full name in grid). */
+  private fillName(label: HTMLElement, en: Entry, normal: string): void {
+    if (en !== UP_ENTRY && this.isLaunchable(en)) {
+      const d = this.disp(en.name);
+      label.textContent = d.slice(0, -4); // "Safari"
+      const ext = document.createElement("span");
+      ext.className = "app-ext";
+      ext.textContent = d.slice(-4); // ".app"
+      label.append(ext);
+    } else {
+      label.textContent = normal;
+    }
+  }
+
   setActive(on: boolean): void {
     this.el.classList.toggle("is-active", on);
     if (!on) this.closeLocations();
@@ -600,15 +616,26 @@ export class PaneView {
     this.openIndex(this.st.cursor);
   }
 
+  /** A macOS `.app` bundle that should launch rather than be entered — only when
+      the "Launch apps" setting is on. Off (Explore mode) → treat it as a folder. */
+  private isLaunchable(en: Entry): boolean {
+    return (
+      state.settings.launchApps &&
+      en !== UP_ENTRY &&
+      en.isDir &&
+      en.name.toLowerCase().endsWith(".app")
+    );
+  }
+
   private openIndex(i: number): void {
     const row = this.view[i];
     if (!row) return;
     if (row.entry === UP_ENTRY) return this.goUp();
-    if (row.entry.isDir) {
+    if (row.entry.isDir && !this.isLaunchable(row.entry)) {
       void this.navigate(row.dirPath, row.entry.name);
       return;
     }
-    // Files: hand off to the OS default handler (never mutates the file).
+    // Files (and launchable .app bundles): hand off to the OS default handler.
     void invoke("open_path", { dir: row.dirPath, name: row.entry.name }).catch((e) =>
       this.showError(String(e))
     );
@@ -655,7 +682,7 @@ export class PaneView {
 
   private async toggleExpand(i: number): Promise<void> {
     const row = this.view[i];
-    if (!row || row.entry === UP_ENTRY || !row.entry.isDir) return;
+    if (!row || row.entry === UP_ENTRY || !row.entry.isDir || this.isLaunchable(row.entry)) return;
     const st = this.expandState.get(row.key);
     if (st) {
       st.open = !st.open;
@@ -681,7 +708,7 @@ export class PaneView {
       return;
     }
     const row = this.view[this.st.cursor];
-    if (!row || row.entry === UP_ENTRY || !row.entry.isDir) return;
+    if (!row || row.entry === UP_ENTRY || !row.entry.isDir || this.isLaunchable(row.entry)) return;
     if (this.expandState.get(row.key)?.open) {
       const next = this.view[this.st.cursor + 1];
       if (next && next.depth > row.depth) this.setCursor(this.st.cursor + 1);
@@ -1072,10 +1099,14 @@ export class PaneView {
   private compactRowH(): number {
     return this.remPx() * (state.settings.chipCards ? 2.6 : ROW_REM);
   }
-  /** Row index of the expanded chip, or -1 when nothing is expanded ("..") . */
+  /** Row index of the expanded chip, or -1 when nothing is expanded. ".." never
+      expands; folders only expand when the "Chips for folders" setting is on
+      (otherwise they stay plain list-style rows even in chips view). */
   private expandedIndex(): number {
     const en = this.view[this.st.cursor]?.entry;
-    return en && en !== UP_ENTRY ? this.st.cursor : -1;
+    if (!en || en === UP_ENTRY) return -1;
+    if (en.isDir && !state.settings.folderChips) return -1;
+    return this.st.cursor;
   }
   private chipH(): number {
     // Folders carry an extra peek line, so they need a touch more height.
@@ -1171,7 +1202,12 @@ export class PaneView {
       return;
     }
     if (en.isSymlink) ic.innerHTML = icons.symlink;
-    else if (en.isDir) ic.innerHTML = icons.folder;
+    else if (this.isLaunchable(en)) {
+      // A launchable .app reads as an application, not a folder.
+      const ft = fileIcon("app");
+      ic.classList.add(`type-${ft.cls}`);
+      ic.innerHTML = ft.svg;
+    } else if (en.isDir) ic.innerHTML = icons.folder;
     else {
       const ft = fileIcon(en.ext);
       ic.classList.add(`type-${ft.cls}`);
@@ -1225,7 +1261,7 @@ export class PaneView {
     if (depth > 0) name.style.paddingLeft = `${0.25 + depth}rem`;
 
     const disc = div("disclose");
-    if (disclosure && en !== UP_ENTRY && en.isDir) {
+    if (disclosure && en !== UP_ENTRY && en.isDir && !this.isLaunchable(en)) {
       disc.classList.add("can");
       if (open) disc.classList.add("open");
       disc.innerHTML = icons.chevron;
@@ -1237,7 +1273,7 @@ export class PaneView {
 
     const label = document.createElement("span");
     label.className = "fname";
-    label.textContent = en === UP_ENTRY ? en.name : this.disp(en.isDir ? en.name : en.stem);
+    this.fillName(label, en, en === UP_ENTRY ? en.name : this.disp(en.isDir ? en.name : en.stem));
     name.append(disc, ic, label);
 
     const ext = div("cell col-ext");
@@ -1280,6 +1316,7 @@ export class PaneView {
         (en.isDir ? " is-dir" : "") +
         (en.isSymlink ? " is-link" : "") +
         (en.hidden ? " is-hidden" : "") +
+        (this.isLaunchable(en) ? " is-app" : "") +
         this.selClass(i)
     );
     row.style.top = `${i * rh}px`;
@@ -1296,6 +1333,7 @@ export class PaneView {
         (en.isDir ? " is-dir" : "") +
         (en.isSymlink ? " is-link" : "") +
         (en.hidden ? " is-hidden" : "") +
+        (this.isLaunchable(en) ? " is-app" : "") +
         this.selClass(i)
     );
     tile.dataset.i = String(i);
@@ -1308,7 +1346,7 @@ export class PaneView {
 
     const label = document.createElement("span");
     label.className = "fname";
-    label.textContent = en === UP_ENTRY ? en.name : this.disp(en.name); // full name (no Ext column in grid)
+    this.fillName(label, en, en === UP_ENTRY ? en.name : this.disp(en.name)); // full name (no Ext column in grid)
 
     tile.append(ic, label);
     return tile;
@@ -1323,6 +1361,7 @@ export class PaneView {
         (en.isDir ? " is-dir" : "") +
         (en.isSymlink ? " is-link" : "") +
         (en.hidden ? " is-hidden" : "") +
+        (this.isLaunchable(en) ? " is-app" : "") +
         this.selClass(i) // includes the cursor resting on ".."
     );
     row.dataset.i = String(i);
@@ -1353,7 +1392,11 @@ export class PaneView {
   private buildChip(i: number, rh: number): HTMLElement {
     const { entry: en, dirPath } = this.view[i];
     const chip = div(
-      "chip" + (en.isDir ? " is-dir" : "") + (en.isSymlink ? " is-link" : "") + (en.hidden ? " is-hidden" : "")
+      "chip" +
+        (en.isDir ? " is-dir" : "") +
+        (this.isLaunchable(en) ? " is-app" : "") +
+        (en.isSymlink ? " is-link" : "") +
+        (en.hidden ? " is-hidden" : "")
     );
     chip.dataset.i = String(i);
     chip.style.top = `${this.chipOffset(i) + 4}px`;
@@ -1376,7 +1419,7 @@ export class PaneView {
     }
 
     this.chipKey = `${dirPath} ${en.name}`;
-    title.textContent = this.disp(en.name);
+    this.fillName(title, en, this.disp(en.name));
 
     const ic = div("ficon");
     this.iconInto(ic, en, dirPath);

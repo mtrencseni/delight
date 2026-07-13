@@ -187,6 +187,8 @@ class App {
       if (typeof s.systemIcons === "boolean") state.settings.systemIcons = s.systemIcons;
       if (typeof s.chipCards === "boolean") state.settings.chipCards = s.chipCards;
       if (typeof s.bigChips === "boolean") state.settings.bigChips = s.bigChips;
+      if (typeof s.folderChips === "boolean") state.settings.folderChips = s.folderChips;
+      if (typeof s.launchApps === "boolean") state.settings.launchApps = s.launchApps;
       if (typeof s.previewIcons === "boolean") state.settings.previewIcons = s.previewIcons;
       if (typeof s.highlightToday === "boolean") state.settings.highlightToday = s.highlightToday;
       if (typeof s.sizeBars === "boolean") state.settings.sizeBars = s.sizeBars;
@@ -427,6 +429,17 @@ class App {
       onBigChips: (v) => {
         state.settings.bigChips = v;
         for (const view of this.views.values()) view.panes?.forEach((p) => p.refreshView());
+        persist();
+      },
+      onFolderChips: (v) => {
+        state.settings.folderChips = v;
+        for (const view of this.views.values()) view.panes?.forEach((p) => p.refreshView());
+        persist();
+      },
+      onLaunchApps: (v) => {
+        state.settings.launchApps = v;
+        // Re-render so .app icons / disclosure triangles update immediately.
+        for (const view of this.views.values()) view.panes?.forEach((p) => p.renderRows());
         persist();
       },
       onPreviewIcons: (v) => {

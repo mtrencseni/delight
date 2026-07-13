@@ -696,6 +696,21 @@ body.col-resizing * {
   color: var(--folder);
 }
 
+/* A launchable .app reads as an application, not a folder — override the folder
+   tint above with the executable colour (these come later + are equally specific). */
+.row.is-app .ficon,
+.crow.is-app .ficon,
+.tile.is-app .gridicon,
+.chip.is-app .ficon {
+  color: var(--ft-exec);
+}
+
+/* The ".app" suffix on a launchable app — very pale, so it reads by its base name.
+   Opacity (not a fixed colour) keeps it faint in selected/inverted rows too. */
+.app-ext {
+  opacity: 0.15;
+}
+
 .row.is-link .ficon,
 .crow.is-link .ficon {
   color: var(--link);
@@ -1437,7 +1452,11 @@ body.fav-dragging * {
 .settings-inner {
   max-width: 34rem;
   margin: 0 auto;
-  padding: 2rem 2rem 3rem;
+  padding: 2rem 2.5rem 3rem;
+  box-sizing: border-box;
+  min-height: 100%; /* so the flanking rules span the full height, not just content */
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
 }
 
 .settings h1 {

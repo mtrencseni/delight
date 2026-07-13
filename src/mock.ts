@@ -27,7 +27,12 @@ for (let i = 0; i < 10000; i++) {
 }
 
 const root: MNode = d({
-  Applications: d({ "Delight.app": d({}) }),
+  Applications: d({
+    "Delight.app": d({ Contents: d({ "Info.plist": f(1024, 30), MacOS: d({ delight: f(4200000, 30) }) }) }),
+    "Buffers.app": d({ Contents: d({ "Info.plist": f(1024, 30) }) }),
+    "Safari.app": d({ Contents: d({ "Info.plist": f(2048, 120) }) }),
+    Utilities: d({ "Terminal.app": d({}) }),
+  }),
   System: d({ Library: d({}) }),
   tmp: d({}),
   Users: d({

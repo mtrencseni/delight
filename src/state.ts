@@ -19,6 +19,8 @@ export const state = {
     systemIcons: false,
     chipCards: false,
     bigChips: true,
+    folderChips: true,
+    launchApps: true,
     previewIcons: false,
     highlightToday: true,
     sizeBars: true,
