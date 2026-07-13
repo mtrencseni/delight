@@ -86,6 +86,7 @@ export function persist(): void {
       tabs: state.tabs.map((t) => ({
         kind: t.kind,
         activePane: t.activePane,
+        single: t.single,
         panes:
           t.panes?.map((p) => ({
             path: p.path,

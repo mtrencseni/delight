@@ -32,6 +32,7 @@ export type CommandId =
   | "viewList"
   | "viewChips"
   | "viewGrid"
+  | "toggleSingle"
   | "zoomIn"
   | "zoomOut"
   | "zoomReset"
@@ -89,6 +90,7 @@ export const COMMANDS: Command[] = [
   { id: "viewList", label: "List view", group: "View", defaults: ["Meta+KeyL"] },
   { id: "viewChips", label: "Chips view", group: "View", defaults: ["Meta+KeyC"] },
   { id: "viewGrid", label: "Icon view", group: "View", defaults: ["Meta+KeyI"] },
+  { id: "toggleSingle", label: "Single-pane view", group: "View", defaults: ["Meta+KeyP"] },
   { id: "zoomIn", label: "Zoom in", group: "View", defaults: ["Meta+Equal", "Meta+NumpadAdd"] },
   { id: "zoomOut", label: "Zoom out", group: "View", defaults: ["Meta+Minus", "Meta+NumpadSubtract"] },
   { id: "zoomReset", label: "Reset zoom", group: "View", defaults: ["Meta+Digit0", "Meta+Numpad0"] },
@@ -215,6 +217,10 @@ export function mergeKeybindings(saved: unknown): Record<CommandId, string[]> {
     // so ⌘C is free for viewChips (whose default we then leave intact).
     if (base.sortCreated.length === 1 && base.sortCreated[0] === "Meta+KeyC") {
       base.sortCreated = ["Meta+Shift+KeyC"];
+    }
+    // Single-pane view's default moved ⌘⇧P → ⌘P; adopt it for untouched configs.
+    if (base.toggleSingle.length === 1 && base.toggleSingle[0] === "Meta+Shift+KeyP") {
+      base.toggleSingle = ["Meta+KeyP"];
     }
   }
   return base;

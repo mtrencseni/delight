@@ -3,6 +3,7 @@ import { invoke, isTauri, onEvent } from "./ipc";
 import { GRID_DEFAULT, GRID_MAX, GRID_MIN, newTabId, normalizeColumnOrder, persist, PREVIEW_SIZES, state, ZOOM_LEVELS } from "./state";
 import type { PaneState, SortDir, SortKey, Tab, Theme } from "./types";
 import { PaneView } from "./pane";
+import { FavSidebar } from "./favsidebar";
 import { initKeyboard } from "./keyboard";
 import { COMMANDS, mergeKeybindings, type CommandId } from "./commands";
 import { applyTheme, effectiveTheme, onThemeChange } from "./theme";
@@ -15,6 +16,8 @@ import { clamp } from "./format";
 interface TabView {
   el: HTMLElement;
   panes: [PaneView, PaneView] | null;
+  dual?: HTMLElement;
+  sidebar?: FavSidebar;
   settings?: SettingsPage;
   keybindings?: KeybindingsPage;
 }
@@ -33,6 +36,7 @@ class App {
   eyeBtn = el("button", "tbtn");
   themeBtn = el("button", "tbtn");
   devBtn = el("button", "tbtn");
+  spBtn = el("button", "tbtn");
   views = new Map<number, TabView>();
   /** Native Quick Look: the pane whose cursor the QL panel is following. */
   private previewPane: PaneView | null = null;
@@ -109,7 +113,8 @@ class App {
               [typeof p0.path === "string" ? p0.path : this.home,
                typeof p1.path === "string" ? p1.path : this.home],
               [p0, p1],
-              t?.activePane === 1 ? 1 : 0
+              t?.activePane === 1 ? 1 : 0,
+              t?.single === true
             );
           }
         } catch {
@@ -155,6 +160,7 @@ class App {
       viewList: () => this.activePane()?.setView("list"),
       viewChips: () => this.activePane()?.setView("chips"),
       viewGrid: () => this.activePane()?.setView("grid"),
+      toggleSingle: () => this.toggleSingle(),
       zoomIn: () => this.zoomStep(1),
       zoomOut: () => this.zoomStep(-1),
       zoomReset: () => this.setZoom(state.settings.defaultZoom, true),
@@ -222,6 +228,10 @@ class App {
     this.eyeBtn.title = "Show hidden files (⌘⇧.)";
     this.eyeBtn.addEventListener("click", () => this.toggleHidden());
 
+    this.spBtn.innerHTML = icons.sidebar;
+    this.spBtn.title = "Single-pane view (⌘P)";
+    this.spBtn.addEventListener("click", () => this.toggleSingle());
+
     this.themeBtn.addEventListener("click", () => this.toggleTheme());
     // Keep the icon in sync when the OS appearance flips while in System mode.
     onThemeChange(() => this.syncThemeBtn());
@@ -237,8 +247,8 @@ class App {
 
     const spacer = el("div", "flexspace");
     spacer.setAttribute("data-tauri-drag-region", ""); // main window-drag zone
-    // Layout: [files tabs][+] …spacer… [system tabs][theme][eye][dev][gear]
-    tabbar.append(this.tabsEl, newBtn, spacer, this.sysTabsEl, this.themeBtn, this.eyeBtn, this.devBtn, gearBtn);
+    // Layout: [files tabs][+] …spacer… [system tabs][single][theme][eye][dev][gear]
+    tabbar.append(this.tabsEl, newBtn, spacer, this.sysTabsEl, this.spBtn, this.themeBtn, this.eyeBtn, this.devBtn, gearBtn);
     root.append(tabbar, this.contentEl);
     this.syncEye();
     this.syncThemeBtn();
@@ -297,6 +307,8 @@ class App {
         // just re-point it at the new cursor item (Finder-style: the preview pane
         // stays up across folder changes until you dismiss it with Space).
         if (this.previewSource && pane() === this.previewSource) this.refreshPanePreview();
+        // Single-pane: keep the sidebar's "current" highlight in sync as the main pane navigates.
+        if (tab.single && index === 0) this.views.get(tab.id)?.sidebar?.render();
         this.renderTabstrip();
         persist();
       },
@@ -314,33 +326,17 @@ class App {
       showHidden: () => state.settings.showHidden,
       sysIcons: () => state.settings.systemIcons,
       locations: () => state.locations,
-      addLocation: (path: string, name: string) => {
-        if (!state.locations.some((l) => l.path === path)) {
-          state.locations.push({ path, name });
-          persist();
-        }
-      },
-      removeLocation: (path: string) => {
-        const i = state.locations.findIndex((l) => l.path === path);
-        if (i >= 0) {
-          state.locations.splice(i, 1);
-          persist();
-        }
-      },
-      moveLocation: (from: number, to: number) => {
-        const arr = state.locations;
-        if (from < 0 || from >= arr.length || to < 0 || to >= arr.length || from === to) return;
-        const [item] = arr.splice(from, 1);
-        arr.splice(to, 0, item);
-        persist();
-      },
+      addLocation: (path: string, name: string) => this.addFavorite(path, name),
+      removeLocation: (path: string) => this.removeFavorite(path),
+      moveLocation: (from: number, to: number) => this.moveFavorite(from, to),
     };
   }
 
   private async addFilesTab(
     paths: [string, string],
     restored?: any[],
-    activePane: 0 | 1 = 0
+    activePane: 0 | 1 = 0,
+    single = false
   ): Promise<void> {
     const num = (v: unknown, dflt: number) =>
       typeof v === "number" && isFinite(v) && v > 0 && v <= 20 ? v : dflt;
@@ -369,19 +365,22 @@ class App {
     const tab: Tab = {
       id: newTabId(),
       kind: "files",
-      activePane,
+      activePane: single ? 0 : activePane,
+      single,
       panes: [mk(paths[0], restored?.[0]), mk(paths[1], restored?.[1])],
     };
     const wrap = el("div", "tabview");
     const dual = el("div", "dual");
     const pv0 = new PaneView(tab.panes![0], this.paneHost(tab, 0));
     const pv1 = new PaneView(tab.panes![1], this.paneHost(tab, 1));
-    dual.append(pv0.el, pv1.el);
+    const sidebar = new FavSidebar(this.favSidebarHost(tab));
+    dual.append(sidebar.el, pv0.el, pv1.el);
     wrap.append(dual);
     this.contentEl.append(wrap);
 
     state.tabs.push(tab);
-    this.views.set(tab.id, { el: wrap, panes: [pv0, pv1] });
+    this.views.set(tab.id, { el: wrap, panes: [pv0, pv1], dual, sidebar });
+    this.applySingle(tab);
     this.syncPaneActive(tab);
 
     for (const [pv, path] of [[pv0, paths[0]], [pv1, paths[1]]] as const) {
@@ -615,6 +614,7 @@ class App {
       if (j === state.activeTab && t.kind === "settings") v?.settings?.sync();
       if (j === state.activeTab && t.kind === "keybindings") v?.keybindings?.sync();
     });
+    this.syncSingleBtn();
   }
 
   cycleTab(d: 1 | -1): void {
@@ -772,12 +772,86 @@ class App {
 
   switchPane(): boolean {
     const tab = state.tabs[state.activeTab];
-    if (!tab?.panes) return false;
+    if (!tab?.panes || tab.single) return false; // single mode has only one pane
     this.closePanePreview(); // the opposite pane is about to become active
     tab.activePane = tab.activePane === 0 ? 1 : 0;
     this.syncPaneActive(tab);
     this.renderTabstrip();
     return true;
+  }
+
+  // ---- single-pane mode + favorites sidebar ---------------------------------
+
+  private favSidebarHost(tab: Tab) {
+    const main = () => this.views.get(tab.id)?.panes?.[0] ?? null;
+    return {
+      locations: () => state.locations,
+      currentPath: () => main()?.st.path ?? null,
+      navigate: (path: string) => void main()?.navigate(path),
+      addLocation: (path: string, name: string) => this.addFavorite(path, name),
+      removeLocation: (path: string) => this.removeFavorite(path),
+      moveLocation: (from: number, to: number) => this.moveFavorite(from, to),
+      sysIcons: () => state.settings.systemIcons,
+    };
+  }
+
+  private addFavorite(path: string, name: string): void {
+    if (state.locations.some((l) => l.path === path)) return;
+    state.locations.push({ path, name });
+    persist();
+    this.refreshSidebars();
+  }
+
+  private removeFavorite(path: string): void {
+    const i = state.locations.findIndex((l) => l.path === path);
+    if (i < 0) return;
+    state.locations.splice(i, 1);
+    persist();
+    this.refreshSidebars();
+  }
+
+  private moveFavorite(from: number, to: number): void {
+    const arr = state.locations;
+    if (from < 0 || from >= arr.length || to < 0 || to >= arr.length || from === to) return;
+    const [item] = arr.splice(from, 1);
+    arr.splice(to, 0, item);
+    persist();
+    this.refreshSidebars();
+  }
+
+  private refreshSidebars(): void {
+    for (const v of this.views.values()) v.sidebar?.render();
+  }
+
+  /** Apply a tab's single/dual layout: toggle the class, and in single mode force
+      the main pane active + refresh the sidebar. */
+  private applySingle(tab: Tab): void {
+    const v = this.views.get(tab.id);
+    if (!v?.dual) return;
+    v.dual.classList.toggle("single", !!tab.single);
+    if (tab.single) {
+      if (this.previewTarget) this.closePanePreview();
+      tab.activePane = 0;
+      this.syncPaneActive(tab);
+      v.sidebar?.render();
+    }
+  }
+
+  private toggleSingle(): void {
+    const tab = state.tabs[state.activeTab];
+    if (!tab?.panes) return; // file tabs only
+    this.closePanePreview();
+    tab.single = !tab.single;
+    this.applySingle(tab);
+    this.syncSingleBtn();
+    persist();
+  }
+
+  private syncSingleBtn(): void {
+    const tab = state.tabs[state.activeTab];
+    const isFile = !!tab?.panes;
+    this.spBtn.classList.toggle("on", isFile && !!tab?.single);
+    this.spBtn.classList.toggle("disabled", !isFile);
   }
 
   // ---- opposite-pane preview -------------------------------------------------

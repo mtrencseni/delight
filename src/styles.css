@@ -297,6 +297,11 @@ body.tab-dragging * {
   background: var(--accent-soft);
 }
 
+.tbtn.disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
 .flexspace {
   flex: 1;
 }
@@ -1438,6 +1443,54 @@ body.fav-dragging * {
   width: 0.875rem;
   height: 0.875rem;
   flex: none;
+}
+
+/* ---------- single-pane mode: fixed favorites sidebar + one browsing pane ---------- */
+.favsidebar {
+  display: none; /* only present in single-pane mode */
+}
+
+.dual.single .favsidebar {
+  display: flex;
+  flex: 0 0 13rem;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  overflow: hidden;
+}
+
+/* The right pane exists only as the temporary preview pane while previewing. */
+.dual.single > .pane:last-child:not(.previewing) {
+  display: none;
+}
+
+.favhead {
+  padding: 0.625rem 0.75rem 0.375rem;
+  font-size: 0.6875rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.favlist {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.0625rem;
+  padding: 0 0.375rem;
+}
+
+.favitem.current {
+  background: var(--cursor-inactive);
+}
+
+.favadd {
+  margin: 0.25rem 0.375rem 0.375rem;
 }
 
 /* ---------- settings tab ---------- */

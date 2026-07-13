@@ -121,4 +121,7 @@ export interface Tab {
   kind: TabKind;
   activePane: 0 | 1;
   panes: [PaneState, PaneState] | null;
+  /** Single-pane mode: a fixed favorites sidebar + one browsing pane (the right
+      pane only appears while previewing). Per-tab. */
+  single?: boolean;
 }
