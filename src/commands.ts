@@ -15,6 +15,8 @@ export type CommandId =
   | "cursorDown"
   | "expand"
   | "collapse"
+  | "nextVisited"
+  | "prevVisited"
   | "pageUp"
   | "pageDown"
   | "cursorHome"
@@ -64,8 +66,12 @@ export const COMMANDS: Command[] = [
   { id: "switchPane", label: "Switch pane", group: "Panes & navigation", defaults: ["Tab"] },
   { id: "cursorUp", label: "Move up", group: "Panes & navigation", defaults: ["ArrowUp"] },
   { id: "cursorDown", label: "Move down", group: "Panes & navigation", defaults: ["ArrowDown"] },
-  { id: "expand", label: "Expand / open folder", group: "Panes & navigation", defaults: ["ArrowRight"] },
-  { id: "collapse", label: "Collapse / to parent", group: "Panes & navigation", defaults: ["ArrowLeft"] },
+  // Plain → / ← jump between recent folders (nextVisited/prevVisited); ⌘→ / ⌘←
+  // open / close the in-list tree.
+  { id: "expand", label: "Expand / open folder", group: "Panes & navigation", defaults: ["Meta+ArrowRight"] },
+  { id: "collapse", label: "Collapse / to parent", group: "Panes & navigation", defaults: ["Meta+ArrowLeft"] },
+  { id: "nextVisited", label: "Next recent folder", group: "Panes & navigation", defaults: ["ArrowRight"] },
+  { id: "prevVisited", label: "Previous recent folder", group: "Panes & navigation", defaults: ["ArrowLeft"] },
   { id: "pageUp", label: "Page up", group: "Panes & navigation", defaults: ["PageUp"] },
   { id: "pageDown", label: "Page down", group: "Panes & navigation", defaults: ["PageDown"] },
   { id: "cursorHome", label: "Jump to top", group: "Panes & navigation", defaults: ["Home", "Meta+ArrowUp"] },
@@ -221,6 +227,21 @@ export function mergeKeybindings(saved: unknown): Record<CommandId, string[]> {
     // Single-pane view's default moved ⌘⇧P → ⌘P; adopt it for untouched configs.
     if (base.toggleSingle.length === 1 && base.toggleSingle[0] === "Meta+Shift+KeyP") {
       base.toggleSingle = ["Meta+KeyP"];
+    }
+    // Plain →/← now jump between recent folders (nextVisited/prevVisited); the
+    // in-list tree moved to ⌘→ / ⌘←. Strip the old plain-arrow bindings off
+    // expand/collapse, then adopt the ⌘-arrow defaults for configs that predate
+    // them (unless the user has bound those combos elsewhere).
+    if (base.expand.includes("ArrowRight")) base.expand = base.expand.filter((c) => c !== "ArrowRight");
+    if (base.collapse.includes("ArrowLeft")) base.collapse = base.collapse.filter((c) => c !== "ArrowLeft");
+    for (const [id, combo] of [
+      ["expand", "Meta+ArrowRight"],
+      ["collapse", "Meta+ArrowLeft"],
+    ] as const) {
+      const usedElsewhere = (Object.entries(base) as [CommandId, string[]][]).some(
+        ([cid, combos]) => cid !== id && combos.includes(combo)
+      );
+      if (!usedElsewhere && !base[id].includes(combo)) base[id].push(combo);
     }
   }
   return base;

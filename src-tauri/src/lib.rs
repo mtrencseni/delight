@@ -15,6 +15,7 @@ pub fn run() {
             fs_cmds::list_dir,
             fs_cmds::home_dir,
             fs_cmds::dir_mtime,
+            fs_cmds::read_text_file,
             icons::file_icon,
             details::item_details,
             details::file_thumbnail,

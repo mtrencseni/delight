@@ -73,6 +73,16 @@ export interface Location {
   name: string;
 }
 
+/** A folder the user has entered (browsed). Kept as an LRU cache so recently /
+    frequently visited folders can be highlighted in their parent. */
+export interface Visited {
+  path: string;
+  /** Times entered (frequency). */
+  count: number;
+  /** Last entered, epoch ms (recency). */
+  last: number;
+}
+
 export type Theme = "light" | "dark" | "system";
 
 export interface Settings {
@@ -94,6 +104,8 @@ export interface Settings {
   previewIcons: boolean;
   /** Tint the modified time green for files changed today. */
   highlightToday: boolean;
+  /** Alternating row background colors (zebra striping) in list & chips views. */
+  stripedRows: boolean;
   /** Show a proportional data bar behind file sizes. */
   sizeBars: boolean;
   /** Scale the size bars logarithmically (with decade gridlines). */
@@ -102,12 +114,19 @@ export interface Settings {
   previewPane: boolean;
   /** QuickLook thumbnail resolution for the opposite-pane preview (px). */
   previewSize: number;
+  /** Max bytes read for the read-only code preview (rest is truncated). */
+  codePreviewBytes: number;
   /** Show a Created-time column in list view. */
   showCreated: boolean;
   /** Show a Permissions column in list view. */
   showPermissions: boolean;
   /** Case transform applied to all displayed names/extensions. */
   nameCase: "original" | "lower" | "upper";
+  /** Group folders above files (Norton Commander) vs sorting them inline with
+      files by the active column (Finder). */
+  foldersOnTop: boolean;
+  /** How many recently-entered folders to remember (0 disables the highlight). */
+  visitedCacheSize: number;
   /** Keep both panes in a tab sorted by the same column/direction. */
   linkedSort: boolean;
   /** Enable the Web Inspector (⌥⌘I). */

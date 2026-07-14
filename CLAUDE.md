@@ -42,7 +42,9 @@ browser. `isTauri` gates native-only calls.
 | File | Role |
 | --- | --- |
 | `main.ts` | App shell: tabs (files + system tabs), tab bar / integrated titlebar, keyboard wiring, settings + shortcuts tab hosting, per-pane `PaneHost`, restore/persist, orchestration of preview / favorites / sort-link / column-link. |
-| `pane.ts` | `PaneView` — the core. One directory pane: list/grid/chips rendering (all **virtualized**), sorting, tree disclosure, selection (incl. icon-view marquee), drag-out, columns (order/resize/visibility), size bars, recency, preview icons, opposite-pane preview, favorites dropdown, on-disk auto-refresh watcher. Big file; most feature work lands here. |
+| `pane.ts` | `PaneView` — the core. One directory pane: list/grid/chips rendering (all **virtualized**), sorting, tree disclosure, selection (incl. icon-view marquee), drag-out, columns (order/resize/visibility), size bars, recency, preview icons, opposite-pane preview (image thumbnail **or** the CodeMirror code preview), favorites dropdown, on-disk auto-refresh watcher. Big file; most feature work lands here. |
+| `codepreview.ts` | `CodePreview` — a **read-only** CodeMirror 6 view for previewing text files (line numbers, minimap, syntax colors, Sublime selection, find, copy — no editing). `langForTextFile(name)` picks the language (or null → try a thumbnail, then fall back to a plain-text code preview). Tab blurs the editor back to the file list; the file list's Tab (`switchPane`) hops focus INTO it. Reads only `settings.codePreviewBytes` bytes (10K default; Settings → "Code preview size"). Built from the shared editor internals below. |
+| `editor-core.ts`, `langs.ts` | **Symlinks into `../Buffers/src/`** — see "Shared editor" below. `editor-core.ts` = syntax HighlightStyle + Sublime selection layer + selection-whitespace + overlay scrollbar + minimap (imports `editor-core.css`); `langs.ts` = language registry. Do not edit here; edit the Buffers originals. |
 | `state.ts` | Global `state` (tabs, settings, locations, keybindings, `columnOrder` + `columnWidths`, …), defaults, debounced `persist()` → `save_state`, `normalizeColumnOrder`. |
 | `types.ts` | All shared types: `Entry`, `Listing`, `Details`, `Settings`, `PaneState`, `ColKey`/`COL_KEYS`, `SortKey`, etc. |
 | `commands.ts` | Keyboard **command registry** + combo encode/label helpers (`comboFromEvent`, `comboLabel`, `mergeKeybindings`). Add a shortcut here. |
@@ -60,7 +62,7 @@ browser. `isTauri` gates native-only calls.
 | File | Commands / role |
 | --- | --- |
 | `lib.rs` | `run()`: registers plugins (**drag**, **window-state**), the invoke handler, and `setup` (first-run 80% window sizing, macOS `setInspectable`, menu, actions init). |
-| `fs_cmds.rs` | `list_dir` (the hot path — returns `Entry[]` with size/modified/created/permissions), `home_dir`, `perm_string` (Unix rwx string). |
+| `fs_cmds.rs` | `list_dir` (the hot path — returns `Entry[]` with size/modified/created/permissions), `home_dir`, `perm_string` (Unix rwx string), `read_text_file` (read-only, capped at `CODE_PREVIEW_MAX` bytes, reports `truncated`/`binary`; powers the code preview). |
 | `details.rs` | `item_details` (created, owner, permissions, default app, dir count + first children) and `file_thumbnail` (QuickLook via `qlmanage`). Chips view + preview. |
 | `icons.rs` | `file_icon` — system icon as PNG data URI (NSWorkspace). |
 | `actions.rs` | `open_path` (default app), `quicklook`/`quicklook_close` (in-process `QLPreviewPanel`), `toggle_devtools`/`close_devtools` (WKWebView inspector). |
@@ -68,6 +70,35 @@ browser. `isTauri` gates native-only calls.
 | `settings.rs` | `load_state`/`save_state` — one JSON file in `app_config_dir`, atomic write. |
 | `menu.rs` | Native menu. |
 | `quicklook.m` | Obj-C `QLPreviewPanel` data source/delegate (compiled by `build.rs` on macOS only). |
+
+## Shared editor (linked with Buffers)
+
+The read-only **code preview** (Space on a text file → CodeMirror in the opposite
+pane) reuses **Buffers'** editor verbatim so the two apps stay identical and fixes
+propagate. It is a real link, not a copy:
+
+- `src/editor-core.ts`, `src/editor-core.css` (transitively) and `src/langs.ts`
+  are **symlinks** into `../Buffers/src/`. Those Buffers files are
+  **dependency-closed** (import only CodeMirror + their own CSS/types) precisely
+  so they can be symlinked. Edit the **Buffers** originals; never the symlinks.
+- Requires both repos checked out **side-by-side** under `~/Repositories/`. A
+  clone of only Delight has dangling symlinks (the preview won't build). `tsc`
+  and Vite follow the symlinks fine.
+- `codepreview.ts` builds the read-only `EditorView` from those shared pieces;
+  `pane.ts showCodePreview()` wires it into the opposite-pane preview and
+  `read_text_file` feeds it. The editor host gets class `edhost cmprev`;
+  `editor-core.css` scopes its **Mariana/One-Light** tokens to `.edhost`, so the
+  preview keeps Buffers' editor palette regardless of Delight's own theme.
+- **CodeMirror must be a single instance** (facets + the parser's syntax-tree
+  node types are identity-based). Because the symlinks' realpath is in Buffers,
+  their bare `@codemirror/*` / `@lezer/*` imports would otherwise resolve from
+  *Buffers'* `node_modules` → a second `@lezer/common` → the highlighter silently
+  no-ops (`TypeError: tags is not iterable`). `vite.config.ts` fixes this with
+  `resolve.alias` pinning every CM/Lezer package to an **absolute path in
+  Delight's own `node_modules`** (dedupe/optimizeDeps.include were NOT enough).
+  Every pinned package is therefore a **direct** dependency in `package.json`
+  (pnpm only top-level-links direct deps, which the alias targets). After
+  touching this, `rm -rf node_modules/.vite` before restarting dev.
 
 ## Key concepts / where things live
 

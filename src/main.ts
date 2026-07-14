@@ -1,6 +1,6 @@
 import "./styles.css";
 import { invoke, isTauri, onEvent } from "./ipc";
-import { GRID_DEFAULT, GRID_MAX, GRID_MIN, newTabId, normalizeColumnOrder, persist, PREVIEW_SIZES, state, ZOOM_LEVELS } from "./state";
+import { clearVisited, CODE_PREVIEW_BYTES, GRID_DEFAULT, GRID_MAX, GRID_MIN, newTabId, normalizeColumnOrder, persist, PREVIEW_SIZES, rebuildVisitedIndex, state, VISITED_SIZES, ZOOM_LEVELS } from "./state";
 import type { PaneState, SortDir, SortKey, Tab, Theme } from "./types";
 import { PaneView } from "./pane";
 import { FavSidebar } from "./favsidebar";
@@ -81,6 +81,14 @@ class App {
       state.locations = [{ path: home, name: home.split("/").filter(Boolean).pop() || "Home" }];
     }
 
+    // Restore the recent-folders (visited) cache.
+    state.visited = Array.isArray(saved?.visited)
+      ? saved.visited
+          .filter((v: any) => typeof v?.path === "string")
+          .map((v: any) => ({ path: v.path, count: Number(v.count) || 1, last: Number(v.last) || 0 }))
+      : [];
+    rebuildVisitedIndex();
+
     // One-time: seed the user's Dropbox folder as a default favorite if they
     // have one. Guarded by a flag so a later removal is respected.
     state.dropboxSeeded = saved?.dropboxSeeded === true;
@@ -143,6 +151,14 @@ class App {
       cursorDown: () => this.activePane()?.moveCursor(1),
       expand: () => this.activePane()?.expandCursor(),
       collapse: () => this.activePane()?.collapseCursor(),
+      // →/←: jump to the next/previous recent ("blue") folder (⌘→/⌘← handle the
+      // in-list tree). Always consumes the key, even when there's no folder to hit.
+      nextVisited: () => {
+        this.activePane()?.jumpVisited(1);
+      },
+      prevVisited: () => {
+        this.activePane()?.jumpVisited(-1);
+      },
       pageUp: () => this.activePane()?.movePage(-1),
       pageDown: () => this.activePane()?.movePage(1),
       cursorHome: () => this.activePane()?.moveHome(),
@@ -197,13 +213,17 @@ class App {
       if (typeof s.launchApps === "boolean") state.settings.launchApps = s.launchApps;
       if (typeof s.previewIcons === "boolean") state.settings.previewIcons = s.previewIcons;
       if (typeof s.highlightToday === "boolean") state.settings.highlightToday = s.highlightToday;
+      if (typeof s.stripedRows === "boolean") state.settings.stripedRows = s.stripedRows;
       if (typeof s.sizeBars === "boolean") state.settings.sizeBars = s.sizeBars;
       if (typeof s.sizeBarLog === "boolean") state.settings.sizeBarLog = s.sizeBarLog;
       if (typeof s.previewPane === "boolean") state.settings.previewPane = s.previewPane;
       if (PREVIEW_SIZES.includes(s.previewSize)) state.settings.previewSize = s.previewSize;
+      if (CODE_PREVIEW_BYTES.includes(s.codePreviewBytes)) state.settings.codePreviewBytes = s.codePreviewBytes;
       if (typeof s.showCreated === "boolean") state.settings.showCreated = s.showCreated;
       if (typeof s.showPermissions === "boolean") state.settings.showPermissions = s.showPermissions;
       if (["original", "lower", "upper"].includes(s.nameCase)) state.settings.nameCase = s.nameCase;
+      if (typeof s.foldersOnTop === "boolean") state.settings.foldersOnTop = s.foldersOnTop;
+      if (VISITED_SIZES.includes(s.visitedCacheSize)) state.settings.visitedCacheSize = s.visitedCacheSize;
       if (typeof s.linkedSort === "boolean") state.settings.linkedSort = s.linkedSort;
       if (typeof s.devTools === "boolean") state.settings.devTools = s.devTools;
     }
@@ -452,6 +472,11 @@ class App {
         for (const view of this.views.values()) view.panes?.forEach((p) => p.renderRows());
         persist();
       },
+      onStripedRows: (v) => {
+        state.settings.stripedRows = v;
+        for (const view of this.views.values()) view.panes?.forEach((p) => p.refreshView());
+        persist();
+      },
       onSizeBars: (v) => {
         state.settings.sizeBars = v;
         for (const view of this.views.values()) view.panes?.forEach((p) => p.refreshView());
@@ -471,6 +496,11 @@ class App {
         state.settings.previewSize = n;
         persist();
       },
+      onCodePreviewBytes: (n) => {
+        state.settings.codePreviewBytes = n;
+        this.refreshPanePreview(); // re-read the open preview at the new cap
+        persist();
+      },
       onShowCreated: (v) => {
         state.settings.showCreated = v;
         for (const view of this.views.values()) view.panes?.forEach((p) => p.refreshColumns());
@@ -485,6 +515,27 @@ class App {
         state.settings.nameCase = c;
         for (const view of this.views.values()) view.panes?.forEach((p) => p.renderRows());
         persist();
+      },
+      onFoldersOnTop: (v) => {
+        state.settings.foldersOnTop = v;
+        for (const view of this.views.values()) view.panes?.forEach((p) => p.refreshView());
+        persist();
+      },
+      onVisitedCacheSize: (n) => {
+        state.settings.visitedCacheSize = n;
+        // Enforce the new cap immediately (evicts oldest / clears when 0).
+        if (n <= 0) clearVisited();
+        else if (state.visited.length > n) {
+          state.visited.sort((a, b) => b.last - a.last);
+          state.visited = state.visited.slice(0, n);
+          rebuildVisitedIndex();
+        }
+        for (const view of this.views.values()) view.panes?.forEach((p) => p.renderRows());
+        persist();
+      },
+      onClearVisited: () => {
+        clearVisited();
+        for (const view of this.views.values()) view.panes?.forEach((p) => p.renderRows());
       },
       onLinkedSort: (v) => {
         state.settings.linkedSort = v;
@@ -772,7 +823,12 @@ class App {
 
   switchPane(): boolean {
     const tab = state.tabs[state.activeTab];
-    if (!tab?.panes || tab.single) return false; // single mode has only one pane
+    if (!tab?.panes) return false;
+    // If a code preview is open, Tab hops the cursor INTO it (arrows then walk
+    // lines); the editor's own Tab hops back out to the file list. Keep the
+    // preview open and don't switch the active pane.
+    if (this.previewTarget?.focusCodePreview()) return true;
+    if (tab.single) return false; // single mode has only one pane
     this.closePanePreview(); // the opposite pane is about to become active
     tab.activePane = tab.activePane === 0 ? 1 : 0;
     this.syncPaneActive(tab);

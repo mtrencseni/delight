@@ -3,6 +3,8 @@ import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import type { ChildEntry, ColKey, ColWidths, Details, Entry, Listing, Location, PaneState, SortDir, SortKey, ViewMode } from "./types";
 import { clamp, fmtDate, humanSize, recency } from "./format";
 import { fileIcon, icons } from "./icons";
+import { CodePreview, langForTextFile } from "./codepreview";
+import type { LangId } from "./langs";
 import {
   cachedDetails,
   cachedIcon,
@@ -13,7 +15,7 @@ import {
   fetchIconForPath,
   fetchThumbnail,
 } from "./sysicons";
-import { GRID_MAX, GRID_MIN, state } from "./state";
+import { GRID_MAX, GRID_MIN, recordVisit, state } from "./state";
 
 const UP_ENTRY: Entry = {
   name: "..",
@@ -30,6 +32,11 @@ const UP_ENTRY: Entry = {
 
 const ROW_REM = 1.75;
 const OVERSCAN = 8;
+
+/** Doc text for the code preview, appending a note when the read was truncated. */
+function codePreviewText(res: { text: string; truncated: boolean }): string {
+  return res.truncated ? res.text.replace(/\n?$/, "\n\n… (file truncated for preview)\n") : res.text;
+}
 // Grid tile chrome (px, independent of zoom — the size slider controls scale).
 const TILE_GUTTER = 30; // horizontal breathing room per tile
 const TILE_LABEL = 42; // icon-to-baseline + two lines of name
@@ -125,6 +132,10 @@ export class PaneView {
   /** Opposite-pane preview: debounce the thumbnail fetch + track the shown item. */
   private previewTimer = 0;
   private previewKey = "";
+  /** Read-only CodeMirror view for text-file previews (lazily created, reused). */
+  private codePreview: CodePreview | null = null;
+  /** Whether the currently-shown preview is the code preview (vs a thumbnail). */
+  private codePreviewActive = false;
   /** Largest file size in the current view (for size data bars). */
   private maxSize = 0;
 
@@ -208,7 +219,12 @@ export class PaneView {
     this.previewEl = div("panepreview hidden");
 
     this.el.append(bar, this.errBox, this.header, this.scroller, this.previewEl, status);
-    this.el.addEventListener("mousedown", () => this.host.activate(this));
+    this.el.addEventListener("mousedown", (e) => {
+      // Clicks inside the read-only code preview drive the editor (select / scroll
+      // / find) — don't let them bubble up to dismiss the preview.
+      if ((e.target as HTMLElement | null)?.closest(".cmprev")) return;
+      this.host.activate(this);
+    });
     // Keyboard navigation suppresses the mouse-hover highlight (it's confusing to
     // see two highlighted rows — the cursor and whatever the idle pointer sits on).
     // The next real pointer move re-enables hover. Guard on coordinates: a
@@ -590,6 +606,7 @@ export class PaneView {
       this.st.path = l.path;
       this.st.listing = l;
       this.st.cursor = 0;
+      recordVisit(l.path); // remember this folder for the "recent folders" highlight
       this.expandState.clear(); // disclosure state belongs to the old root
       this.pathInput.value = l.path;
       this.hideError();
@@ -741,6 +758,30 @@ export class PaneView {
     }
   }
 
+  /** Full path of a child entry within `dirPath` (root-aware). */
+  private folderPath(dirPath: string, name: string): string {
+    return dirPath.endsWith("/") ? dirPath + name : `${dirPath}/${name}`;
+  }
+
+  /** True if `en` is a folder the user has recently entered (a "blue" folder). */
+  private isVisited(en: Entry, dirPath: string): boolean {
+    return en.isDir && en !== UP_ENTRY && state.visitedPaths.has(this.folderPath(dirPath, en.name));
+  }
+
+  /** ←/→: move the cursor to the previous/next recent ("blue") folder. Returns
+      false when there isn't one (so the caller can fall back to expand/collapse). */
+  jumpVisited(dir: 1 | -1): boolean {
+    for (let i = this.st.cursor + dir; i >= 0 && i < this.view.length; i += dir) {
+      const r = this.view[i];
+      if (r && this.isVisited(r.entry, r.dirPath)) {
+        this.markKbNav();
+        this.setCursor(i);
+        return true;
+      }
+    }
+    return false;
+  }
+
   // ---- view mode -------------------------------------------------------------
 
   /** Switch this pane's view mode (list / chips / grid). Used by the toolbar
@@ -801,7 +842,8 @@ export class PaneView {
     const byName = (a: Entry, b: Entry) =>
       a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true });
     return (a, b) => {
-      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      // NC-style: folders grouped above files. Finder-style: sorted inline.
+      if (state.settings.foldersOnTop && a.isDir !== b.isDir) return a.isDir ? -1 : 1;
       let c: number;
       if (k === "name") c = byName(a, b);
       else if (k === "ext")
@@ -1317,6 +1359,8 @@ export class PaneView {
         (en.isSymlink ? " is-link" : "") +
         (en.hidden ? " is-hidden" : "") +
         (this.isLaunchable(en) ? " is-app" : "") +
+        (this.isVisited(en, dirPath) ? " visited" : "") +
+        (state.settings.stripedRows && i % 2 ? " alt" : "") +
         this.selClass(i)
     );
     row.style.top = `${i * rh}px`;
@@ -1334,6 +1378,7 @@ export class PaneView {
         (en.isSymlink ? " is-link" : "") +
         (en.hidden ? " is-hidden" : "") +
         (this.isLaunchable(en) ? " is-app" : "") +
+        (this.isVisited(en, dirPath) ? " visited" : "") +
         this.selClass(i)
     );
     tile.dataset.i = String(i);
@@ -1362,6 +1407,8 @@ export class PaneView {
         (en.isSymlink ? " is-link" : "") +
         (en.hidden ? " is-hidden" : "") +
         (this.isLaunchable(en) ? " is-app" : "") +
+        (this.isVisited(en, dirPath) ? " visited" : "") +
+        (state.settings.stripedRows && i % 2 ? " alt" : "") +
         this.selClass(i) // includes the cursor resting on ".."
     );
     row.dataset.i = String(i);
@@ -1396,7 +1443,8 @@ export class PaneView {
         (en.isDir ? " is-dir" : "") +
         (this.isLaunchable(en) ? " is-app" : "") +
         (en.isSymlink ? " is-link" : "") +
-        (en.hidden ? " is-hidden" : "")
+        (en.hidden ? " is-hidden" : "") +
+        (this.isVisited(en, dirPath) ? " visited" : "")
     );
     chip.dataset.i = String(i);
     chip.style.top = `${this.chipOffset(i) + 4}px`;
@@ -1796,6 +1844,17 @@ export class PaneView {
     this.previewKey = key;
     clearTimeout(this.previewTimer);
 
+    // Known text file → render it read-only in CodeMirror (Buffers look-and-feel)
+    // rather than a thumbnail. Only the first N bytes are read (a setting).
+    if (entry !== UP_ENTRY && !entry.isDir) {
+      const lang = langForTextFile(entry.name);
+      if (lang) {
+        this.showCodePreview(entry, dirPath, lang, key);
+        return;
+      }
+    }
+    this.detachCodePreview();
+
     const stage = div("pp-stage");
     const info = div("pp-info");
     const nameEl = div("pp-name");
@@ -1827,7 +1886,11 @@ export class PaneView {
         else {
           this.previewTimer = window.setTimeout(() => {
             void fetchThumbnail(dirPath, entry.name, px).then((uri) => {
-              if (this.previewKey === key && uri) this.setPreviewImg(stage, uri);
+              if (this.previewKey !== key) return;
+              if (uri) this.setPreviewImg(stage, uri);
+              // No thumbnail → if it's actually text, open it in the Buffers
+              // (CodeMirror) preview instead of leaving a bare icon.
+              else this.tryCodeFallback(entry, dirPath, key);
             });
           }, 120);
         }
@@ -1847,13 +1910,97 @@ export class PaneView {
     stage.replaceChildren(img);
   }
 
+  /** Render a text file read-only in a CodeMirror view (identical to Buffers:
+      line numbers, minimap, syntax colors, Sublime selection, find, copy). */
+  private showCodePreview(entry: Entry, dirPath: string, lang: LangId, key: string): void {
+    const host = div("edhost cmprev");
+    if (!this.codePreview) this.codePreview = new CodePreview(host, (f) => this.setCodeFocused(f));
+    else host.append(this.codePreview.dom); // reuse the one view; re-parent it
+    this.codePreview.setDoc("", lang); // placeholder until the read resolves
+
+    this.previewEl.replaceChildren(host);
+    this.previewEl.classList.remove("hidden");
+    this.el.classList.add("previewing", "code-preview");
+    this.codePreviewActive = true;
+
+    void invoke<{ text: string; truncated: boolean; binary: boolean }>("read_text_file", {
+      dir: dirPath,
+      name: entry.name,
+      maxBytes: state.settings.codePreviewBytes,
+    })
+      .then((res) => {
+        if (this.previewKey !== key || !this.codePreview) return;
+        // Binary/undecodable → fall back to the normal thumbnail preview.
+        if (res.binary) {
+          this.detachCodePreview();
+          this.previewKey = ""; // force showPreview to rebuild
+          this.showPreview(entry, dirPath);
+          return;
+        }
+        this.codePreview.setDoc(codePreviewText(res), lang);
+      })
+      .catch((e) => {
+        if (this.previewKey !== key || !this.codePreview) return;
+        this.codePreview.setDoc(`Could not read file:\n${String(e)}`, "plain");
+      });
+  }
+
+  /** A file with no thumbnail preview: if it decodes as text, open it in the
+      code preview (Buffers); if it's binary, keep the icon stage already shown. */
+  private tryCodeFallback(entry: Entry, dirPath: string, key: string): void {
+    void invoke<{ text: string; truncated: boolean; binary: boolean }>("read_text_file", {
+      dir: dirPath,
+      name: entry.name,
+      maxBytes: state.settings.codePreviewBytes,
+    })
+      .then((res) => {
+        if (this.previewKey !== key || res.binary) return;
+        const host = div("edhost cmprev");
+        if (!this.codePreview) this.codePreview = new CodePreview(host, (f) => this.setCodeFocused(f));
+        else host.append(this.codePreview.dom);
+        this.codePreview.setDoc(codePreviewText(res), langForTextFile(entry.name) ?? "plain");
+        this.previewEl.replaceChildren(host);
+        this.el.classList.add("code-preview");
+        this.codePreviewActive = true;
+      })
+      .catch(() => {});
+  }
+
+  /** Move keyboard focus into the open code preview so arrows walk lines. Returns
+      false when there's no code preview showing (caller does its normal thing). */
+  focusCodePreview(): boolean {
+    if (!this.codePreviewActive || !this.codePreview) return false;
+    this.codePreview.focus();
+    return true;
+  }
+
+  /** Reflect code-preview focus on the tab's dual container so CSS can move the
+      active-pane highlight onto the preview pane (and off the file pane). */
+  private setCodeFocused(focused: boolean): void {
+    this.el.closest(".dual")?.classList.toggle("code-focused", focused);
+  }
+
+  /** Remove the code preview's editor from the DOM (kept alive for reuse). */
+  private detachCodePreview(): void {
+    if (this.codePreview) this.codePreview.dom.remove();
+    this.el.classList.remove("code-preview");
+    this.codePreviewActive = false;
+    this.setCodeFocused(false);
+  }
+
   /** Tear down the preview and restore the normal listing view. */
   hidePreview(): void {
     if (!this.isPreviewing()) return;
     clearTimeout(this.previewTimer);
     this.previewKey = "";
     this.previewEl.classList.add("hidden");
-    this.el.classList.remove("previewing");
+    this.el.classList.remove("previewing", "code-preview");
+    this.codePreviewActive = false;
+    this.setCodeFocused(false);
+    if (this.codePreview) {
+      this.codePreview.destroy();
+      this.codePreview = null;
+    }
     this.previewEl.replaceChildren();
     this.renderRows(); // scroller had zero height while hidden — repopulate
   }

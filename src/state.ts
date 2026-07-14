@@ -1,8 +1,12 @@
 import { invoke } from "./ipc";
-import { COL_KEYS, type ColKey, type Location, type Settings, type Tab } from "./types";
+import { COL_KEYS, type ColKey, type Location, type Settings, type Tab, type Visited } from "./types";
 
 export const ZOOM_LEVELS = [50, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200];
 export const PREVIEW_SIZES = [512, 1024, 2048];
+/** Cache sizes offered for the "recent folders" highlight. */
+export const VISITED_SIZES = [50, 100, 200, 500];
+/** Byte caps offered for the read-only code preview (10K default → 10M). */
+export const CODE_PREVIEW_BYTES = [10 * 1024, 100 * 1024, 1024 * 1024, 10 * 1024 * 1024];
 export const GRID_MIN = 48;
 export const GRID_MAX = 160;
 export const GRID_DEFAULT = 80;
@@ -23,13 +27,17 @@ export const state = {
     launchApps: true,
     previewIcons: false,
     highlightToday: true,
+    stripedRows: true,
     sizeBars: true,
     sizeBarLog: false,
     previewPane: true,
     previewSize: 1024,
+    codePreviewBytes: 10 * 1024,
     showCreated: false,
     showPermissions: false,
     nameCase: "original",
+    foldersOnTop: true,
+    visitedCacheSize: 100,
     linkedSort: true,
     devTools: false,
   } as Settings,
@@ -45,7 +53,47 @@ export const state = {
   // Whether we've already offered the Dropbox folder as a default favorite
   // (once only, so removing it sticks).
   dropboxSeeded: false,
+  // LRU cache of folders the user has entered (for the "recent folders"
+  // highlight). `visitedPaths` mirrors it as a Set for O(1) render-time lookup.
+  visited: [] as Visited[],
+  visitedPaths: new Set<string>(),
 };
+
+/** Rebuild the fast membership Set from the visited array (after load/edit). */
+export function rebuildVisitedIndex(): void {
+  state.visitedPaths = new Set(state.visited.map((v) => v.path));
+}
+
+/** Record that the user entered `path` (browsed its contents). Bumps recency +
+    frequency and evicts the least-recently-used entry beyond the cache size. */
+export function recordVisit(path: string): void {
+  const cap = state.settings.visitedCacheSize;
+  if (cap <= 0) {
+    if (state.visited.length) clearVisited();
+    return;
+  }
+  const now = Date.now();
+  const existing = state.visited.find((v) => v.path === path);
+  if (existing) {
+    existing.count++;
+    existing.last = now;
+  } else {
+    state.visited.push({ path, count: 1, last: now });
+    state.visitedPaths.add(path);
+  }
+  if (state.visited.length > cap) {
+    state.visited.sort((a, b) => a.last - b.last); // oldest first
+    for (const v of state.visited.splice(0, state.visited.length - cap)) state.visitedPaths.delete(v.path);
+  }
+  persist();
+}
+
+/** Empty the recent-folders cache. */
+export function clearVisited(): void {
+  state.visited = [];
+  state.visitedPaths = new Set();
+  persist();
+}
 
 let nextId = 1;
 export function newTabId(): number {
@@ -83,6 +131,7 @@ export function persist(): void {
       columnOrder: state.columnOrder,
       columnWidths: state.columnWidths,
       dropboxSeeded: state.dropboxSeeded,
+      visited: state.visited,
       tabs: state.tabs.map((t) => ({
         kind: t.kind,
         activePane: t.activePane,

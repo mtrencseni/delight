@@ -1,5 +1,5 @@
 import type { Settings, Theme } from "./types";
-import { PREVIEW_SIZES, ZOOM_LEVELS } from "./state";
+import { CODE_PREVIEW_BYTES, PREVIEW_SIZES, VISITED_SIZES, ZOOM_LEVELS } from "./state";
 import { icons } from "./icons";
 
 export interface SettingsHooks {
@@ -15,13 +15,18 @@ export interface SettingsHooks {
   onLaunchApps(v: boolean): void;
   onPreviewIcons(v: boolean): void;
   onHighlightToday(v: boolean): void;
+  onStripedRows(v: boolean): void;
   onSizeBars(v: boolean): void;
   onSizeBarLog(v: boolean): void;
   onPreviewPane(v: boolean): void;
   onPreviewSize(n: number): void;
+  onCodePreviewBytes(n: number): void;
   onShowCreated(v: boolean): void;
   onShowPermissions(v: boolean): void;
   onNameCase(c: "original" | "lower" | "upper"): void;
+  onFoldersOnTop(v: boolean): void;
+  onVisitedCacheSize(n: number): void;
+  onClearVisited(): void;
   onLinkedSort(v: boolean): void;
   onOpenKeybindings(): void;
   onDevTools(v: boolean): void;
@@ -91,6 +96,35 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     sizeSeg.append(b);
   }
 
+  // Code-preview byte cap segmented control (10K / 100K / 1M / 10M).
+  const byteLabel = (n: number) => (n >= 1024 * 1024 ? `${Math.round(n / (1024 * 1024))}M` : `${Math.round(n / 1024)}K`);
+  const codeBytesSeg = el("div", "seg");
+  const codeBytesBtns = new Map<number, HTMLButtonElement>();
+  for (const n of CODE_PREVIEW_BYTES) {
+    const b = el("button", "", byteLabel(n));
+    b.addEventListener("click", () => {
+      hooks.onCodePreviewBytes(n);
+      sync();
+    });
+    codeBytesBtns.set(n, b);
+    codeBytesSeg.append(b);
+  }
+
+  // Recent-folders cache size (50 / 100 / 200 / 500) + a Clear button.
+  const visitedSeg = el("div", "seg");
+  const visitedBtns = new Map<number, HTMLButtonElement>();
+  for (const n of VISITED_SIZES) {
+    const b = el("button", "", String(n));
+    b.addEventListener("click", () => {
+      hooks.onVisitedCacheSize(n);
+      sync();
+    });
+    visitedBtns.set(n, b);
+    visitedSeg.append(b);
+  }
+  const clearVisitedBtn = el("button", "textbtn", "Clear");
+  clearVisitedBtn.addEventListener("click", () => hooks.onClearVisited());
+
   // Toggle switch factory: reads its value and applies a change via callbacks.
   const makeSwitch = (read: () => boolean, write: (v: boolean) => void) => {
     const s = el("button", "switch");
@@ -109,6 +143,7 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
   const launchAppsSw = makeSwitch(() => hooks.get().launchApps, hooks.onLaunchApps);
   const createdColSw = makeSwitch(() => hooks.get().showCreated, hooks.onShowCreated);
   const permsColSw = makeSwitch(() => hooks.get().showPermissions, hooks.onShowPermissions);
+  const foldersTopSw = makeSwitch(() => hooks.get().foldersOnTop, hooks.onFoldersOnTop);
   const linkedSortSw = makeSwitch(() => hooks.get().linkedSort, hooks.onLinkedSort);
 
   // Item-case segmented control (original / lowercase / uppercase).
@@ -131,6 +166,7 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
   const bigChipsSw = makeSwitch(() => hooks.get().bigChips, hooks.onBigChips);
   const folderChipsSw = makeSwitch(() => hooks.get().folderChips, hooks.onFolderChips);
   const todaySw = makeSwitch(() => hooks.get().highlightToday, hooks.onHighlightToday);
+  const stripedSw = makeSwitch(() => hooks.get().stripedRows, hooks.onStripedRows);
   const sizeBarsSw = makeSwitch(() => hooks.get().sizeBars, hooks.onSizeBars);
   const sizeBarLogSw = makeSwitch(() => hooks.get().sizeBarLog, hooks.onSizeBarLog);
   const previewPaneSw = makeSwitch(() => hooks.get().previewPane, hooks.onPreviewPane);
@@ -176,6 +212,10 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     row("Launch apps", "Double-click a .app to launch it (can't enter). Off = browse it as a folder", launchAppsSw),
     row("Preview in opposite pane", "Space previews the file in the other pane instead of a Quick Look window", previewPaneSw),
     row("Preview resolution", "Thumbnail size (px) for the opposite-pane preview", sizeSeg),
+    row("Code preview size", "How much of a text file to load into the read-only editor preview", codeBytesSeg),
+    row("Alternating row colors", "Zebra-stripe every other row in list and chips views", stripedSw),
+    row("Recent folders", "Highlight folders you've recently entered when browsing their parent (←/→ jumps between them)", visitedSeg),
+    row("Clear recent folders", "Forget every remembered folder", clearVisitedBtn),
     row("Highlight recent files", "Green modified time for today, paler for yesterday", todaySw),
     row("Size bars", "Proportional data bar behind file sizes", sizeBarsSw),
     row("Logarithmic size bars", "Log scale with decade gridlines (10 KB, 100 KB, …)", sizeBarLogSw),
@@ -186,6 +226,7 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
 
   section(
     "Sorting",
+    row("Folders on top", "Group folders above files (Norton Commander) instead of sorting them inline (Finder)", foldersTopSw),
     row("Link both panes", "Sort both panes in a tab by the same column", linkedSortSw)
   );
 
@@ -219,6 +260,8 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     const s = hooks.get();
     for (const [t, b] of themeBtns) b.classList.toggle("on", s.theme === t);
     for (const [px, b] of sizeBtns) b.classList.toggle("on", s.previewSize === px);
+    for (const [n, b] of codeBytesBtns) b.classList.toggle("on", s.codePreviewBytes === n);
+    for (const [n, b] of visitedBtns) b.classList.toggle("on", s.visitedCacheSize === n);
     setSwitch(hiddenSw, s.showHidden);
     setSwitch(lowerSw, s.lowercaseTabs);
     setSwitch(sysIconSw, s.systemIcons);
@@ -228,11 +271,13 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     setSwitch(bigChipsSw, s.bigChips);
     setSwitch(folderChipsSw, s.folderChips);
     setSwitch(todaySw, s.highlightToday);
+    setSwitch(stripedSw, s.stripedRows);
     setSwitch(sizeBarsSw, s.sizeBars);
     setSwitch(sizeBarLogSw, s.sizeBarLog);
     setSwitch(previewPaneSw, s.previewPane);
     setSwitch(createdColSw, s.showCreated);
     setSwitch(permsColSw, s.showPermissions);
+    setSwitch(foldersTopSw, s.foldersOnTop);
     setSwitch(linkedSortSw, s.linkedSort);
     for (const [val, b] of caseBtns) b.classList.toggle("on", s.nameCase === val);
     setSwitch(devToolsSw, s.devTools);

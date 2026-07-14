@@ -180,3 +180,53 @@ pub fn dir_mtime(path: String) -> Option<u64> {
         .ok()
         .map(|d| d.as_millis() as u64)
 }
+
+/// Result of reading a text file for the code preview.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextFile {
+    text: String,
+    /// True if the file was longer than `max_bytes` and got cut off.
+    truncated: bool,
+    /// True if the bytes didn't look like UTF-8 text (caller shows the plain preview).
+    binary: bool,
+}
+
+/// Read a text file for the read-only code preview (never mutates anything).
+/// Reads at most `max_bytes` so a huge/binary file can't stall the UI, and
+/// reports back whether it truncated or the content looked binary.
+#[tauri::command]
+pub async fn read_text_file(dir: String, name: String, max_bytes: usize) -> Result<TextFile, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::io::Read;
+        let path = Path::new(&dir).join(&name);
+        let file = fs::File::open(&path).map_err(|e| friendly_io(&e))?;
+        let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+        let cap = max_bytes.max(1);
+        let mut buf = Vec::with_capacity(cap.min(len as usize + 1).max(1));
+        // +1 byte over the cap so we can tell "exactly max" from "longer than max".
+        file.take(cap as u64 + 1)
+            .read_to_end(&mut buf)
+            .map_err(|e| friendly_io(&e))?;
+        let truncated = buf.len() > cap;
+        if truncated {
+            buf.truncate(cap);
+        }
+        // A NUL byte in the sniffed prefix is the classic "this is binary" tell.
+        if buf.contains(&0) {
+            return Ok(TextFile { text: String::new(), truncated, binary: true });
+        }
+        match String::from_utf8(buf) {
+            Ok(text) => Ok(TextFile { text, truncated, binary: false }),
+            // Lossy-decode invalid UTF-8 (e.g. latin-1) rather than fail outright,
+            // but flag it so the caller can fall back to the plain preview.
+            Err(e) => Ok(TextFile {
+                text: String::from_utf8_lossy(e.as_bytes()).into_owned(),
+                truncated,
+                binary: true,
+            }),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}

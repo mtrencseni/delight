@@ -67,6 +67,9 @@ const root: MNode = d({
       ".zshrc": f(1834, 20),
       ".gitconfig": f(310, 90),
       "todo.txt": f(842, 0),
+      "server.log": f(48000, 1),
+      "scratch.rst": f(900, 1),
+      "blob.bin": f(4096, 1),
       "archive.tar.gz": f(120423440, 200),
       "link-to-docs": { link: "/Users/demo/Documents", mtime: NOW - day },
       "broken-link": { link: "/Users/demo/missing", mtime: NOW - day },
@@ -211,9 +214,25 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
     }
     case "file_thumbnail": {
       const nm = String(args?.name ?? args?.dir);
+      const ext = nm.split(".").pop()?.toLowerCase() ?? "";
+      // QuickLook only renders certain types; return null otherwise so the app can
+      // fall back to the code preview (or a plain icon) — like the real backend.
+      const IMG = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "pdf", "svg", "icns", "ico", "dmg"];
+      if (!IMG.includes(ext)) return null as T;
       const hue = (nm.length * 57) % 360;
       const s = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='6' fill='hsl(${hue} 55% 50%)'/><text x='32' y='42' font-size='30' text-anchor='middle' fill='white' font-family='sans-serif'>${nm.slice(0, 1).toUpperCase()}</text></svg>`;
       return ("data:image/svg+xml," + encodeURIComponent(s)) as T;
+    }
+
+    case "read_text_file": {
+      const name = String(args?.name ?? "");
+      const ext = name.split(".").pop()?.toLowerCase() ?? "";
+      const maxBytes = Number(args?.maxBytes) || 10 * 1024;
+      const BINARY = ["png","jpg","jpeg","gif","webp","bmp","heic","pdf","zip","gz","tar","tgz","bin","exe","dll","so","dylib","o","a","class","jar","mp3","mp4","mov","wav","dmg","xlsx","docx","ico","icns"];
+      if (BINARY.includes(ext)) return { text: "", truncated: false, binary: true } as T;
+      const full = mockText(name, ext);
+      const truncated = full.length > maxBytes;
+      return { text: truncated ? full.slice(0, maxBytes) : full, truncated, binary: false } as T;
     }
 
     case "fs_roots":
@@ -229,5 +248,45 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
       return undefined as T;
     default:
       throw `unknown command ${cmd}`;
+  }
+}
+
+/** Sample file contents for the browser mock, so the code preview has something
+    syntax-highlightable to render per extension. */
+function mockText(path: string, ext: string): string {
+  const name = path.split("/").pop() ?? "file";
+  switch (ext) {
+    case "py":
+      return `#!/usr/bin/env python3\n"""${name} — demo module."""\n\nimport sys\nfrom dataclasses import dataclass\n\n\n@dataclass\nclass Point:\n    x: float\n    y: float\n\n    def dist(self, other: "Point") -> float:\n        return ((self.x - other.x) ** 2 + (self.y - other.y) ** 2) ** 0.5\n\n\ndef main() -> int:\n    a, b = Point(0, 0), Point(3, 4)\n    print(f"distance = {a.dist(b):.2f}")  # 5.00\n    return 0\n\n\nif __name__ == "__main__":\n    sys.exit(main())\n`;
+    case "sh":
+      return `#!/usr/bin/env bash\nset -euo pipefail\n\n# ${name} — build helper\nROOT="$(cd "$(dirname "$0")" && pwd)"\n\nfor dir in "$ROOT"/src/*; do\n  if [[ -d "$dir" ]]; then\n    echo "building $(basename "$dir")..."\n    make -C "$dir" all\n  fi\ndone\n\necho "done."\n`;
+    case "md":
+    case "markdown":
+      return `# ${name}\n\nA **read-only** preview rendered with _CodeMirror 6_ — the same engine\n[Buffers](https://example.com) uses.\n\n## Features\n\n- Line numbers and a minimap\n- Syntax highlighting\n- Selection, copy, and find (⌘F)\n\n> You can't edit here — this is a viewer.\n\n\`\`\`js\nconst answer = 42;\n\`\`\`\n`;
+    case "json":
+      return `{\n  "name": "${name}",\n  "version": "1.0.0",\n  "private": true,\n  "keywords": ["demo", "preview"],\n  "count": 3,\n  "nested": { "enabled": true, "ratio": 0.75 }\n}\n`;
+    case "ts":
+    case "tsx":
+      return `// ${name}\nexport interface Point {\n  x: number;\n  y: number;\n}\n\nexport function dist(a: Point, b: Point): number {\n  return Math.hypot(a.x - b.x, a.y - b.y);\n}\n\nconst origin: Point = { x: 0, y: 0 };\nconsole.log(dist(origin, { x: 3, y: 4 })); // 5\n`;
+    case "log": {
+      const lines = [];
+      for (let i = 1; i <= 800; i++) {
+        const lvl = ["INFO", "WARN", "DEBUG", "ERROR"][i % 4];
+        lines.push(`2026-07-14 10:${String(i % 60).padStart(2, "0")}:00 [${lvl}] request ${i} handled in ${i % 200}ms — GET /api/items/${i}`);
+      }
+      return lines.join("\n") + "\n";
+    }
+    case "tex":
+      return `\\documentclass{article}\n\\usepackage{amsmath}\n\n\\title{${name}}\n\\begin{document}\n\\maketitle\n\nThe Gaussian integral:\n\\begin{equation}\n  \\int_{-\\infty}^{\\infty} e^{-x^2}\\,dx = \\sqrt{\\pi}.\n\\end{equation}\n\n\\end{document}\n`;
+    default: {
+      const lines = [];
+      lines.push(`${name}`);
+      lines.push("");
+      lines.push("This is a plain-text preview rendered in a read-only CodeMirror view.");
+      lines.push("It supports selection, copy, scrolling, find (Cmd-F), and a minimap.");
+      lines.push("");
+      for (let i = 1; i <= 40; i++) lines.push(`Line ${i}: the quick brown fox jumps over the lazy dog.`);
+      return lines.join("\n") + "\n";
+    }
   }
 }

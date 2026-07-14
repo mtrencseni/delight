@@ -11,6 +11,25 @@ const NATIVE_EDIT = new Set([
   "Meta+Shift+KeyZ",
 ]);
 
+// When the code preview (a CodeMirror editor) is focused, it owns navigation and
+// selection — including the strong-modifier combos (⌘↑/⌘↓ jump to doc top/bottom)
+// that would otherwise bypass the text-field guard and move the file pane instead.
+const EDITOR_OWNED = new Set<CommandId>([
+  "cursorUp",
+  "cursorDown",
+  "cursorHome",
+  "cursorEnd",
+  "pageUp",
+  "pageDown",
+  "selectUp",
+  "selectDown",
+  "selectAll",
+  // ⌘←/⌘→ (expand/collapse the file tree) belong to the editor's line-nav when
+  // the code preview is focused.
+  "expand",
+  "collapse",
+]);
+
 export interface KeyboardConfig {
   /** Current combo → command lookup (rebuilt by the app when bindings change). */
   lookup(): Map<string, CommandId>;
@@ -33,6 +52,11 @@ export function initKeyboard(cfg: KeyboardConfig): void {
     // keys (arrows, Space, Enter, Escape…) belong to the field, and so do the
     // native editing combos (⌘C/X/V/A/Z).
     if (typing && (!comboHasStrongMod(combo) || NATIVE_EDIT.has(combo))) return;
+
+    // The focused code preview owns navigation/selection keys — let CodeMirror
+    // handle them (e.g. ⌘↑/⌘↓ to the top/bottom of the preview) instead of
+    // moving the file pane underneath.
+    if (EDITOR_OWNED.has(id) && t?.closest?.(".cm-editor")) return;
 
     const handled = cfg.run(id);
     if (handled !== false) e.preventDefault();
