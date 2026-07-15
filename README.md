@@ -4,8 +4,11 @@ A Total Commander–style **dual-pane file manager** that tries to live up to it
 name: fast, keyboard-first, no jank, with its own clean design (not a native
 look-alike).
 
-> **v0.1 — macOS. Strictly read-only:** Delight never creates, moves, renames,
-> or deletes your files. The only thing it writes is its own settings.
+> **v0.1 — macOS & Windows.** File operations (copy / move / rename / new folder /
+> move-to-Trash) are guarded and confirmed by default; everything else is
+> read-only. The only thing it writes unprompted is its own settings.
+>
+> On **Windows** every **⌘** shortcut below is **Ctrl** (⌘T → Ctrl+T, etc.).
 
 ![Delight Commander](docs/screenshot.png)
 
@@ -57,13 +60,20 @@ pnpm dev            # browser-only UI against a mock filesystem (no native shell
 Build a distributable app:
 
 ```sh
-pnpm tauri build    # → src-tauri/target/release/bundle/macos/Delight.app
+pnpm tauri build
+# macOS   → src-tauri/target/release/bundle/macos/Delight.app
+# Windows → src-tauri/target/release/delight.exe (standalone)
+#           src-tauri/target/release/bundle/nsis/Delight_0.1.0_x64-setup.exe (installer)
 ```
+
+The Windows installer is unsigned, so SmartScreen shows a "More info → Run
+anyway" prompt the first time; it bootstraps the WebView2 runtime on older
+Windows 10 if it's missing.
 
 ## Keyboard shortcuts
 
 All shortcuts are rebindable in **Settings → Keyboard → Configure shortcuts**.
-Defaults:
+Defaults (on Windows, read every **⌘** as **Ctrl**):
 
 | Keys | Action |
 | --- | --- |
@@ -77,7 +87,9 @@ Defaults:
 | ⇧↑ / ⇧↓ · ⌘A | Extend selection / select all |
 | Enter · double-click | Open (folder or default app) |
 | Backspace | Go up a folder |
-| Space | Preview |
+| **F5 / F6 / ⇧F6 / F7 / F8** | Copy / Move / Rename / New folder / Delete — the Norton Commander keys _(macOS: 5 / 6 / ⇧6 / 7 / 8)_ |
+| Space · F3 | Preview _(F3 = "view"; macOS: Space · 3)_ |
+| **Alt+F1 / Alt+F2** | Drive picker for the left / right pane _(Windows)_ |
 | ⌘1 / ⌘2 | Favorites — left / right pane |
 | ⌘N ⌘E ⌘S ⌘⇧C ⌘M | Sort by name / ext / size / created / modified |
 | ⌘+ ⌘− ⌘0 | Zoom in / out / reset |
@@ -88,22 +100,28 @@ Defaults:
 
 - **Read-only.** Delight never modifies your files.
 - Its own settings (open tabs, favorites, shortcuts, window size, …) live in a
-  single JSON file at
-  `~/Library/Application Support/com.trencseni.delight/settings.json`
-  (plus `.window-state.json`). It writes nowhere else.
-- The first time you browse into a protected folder (Downloads, Documents, …),
-  macOS asks for permission once, as it does for any app.
+  single JSON file — macOS:
+  `~/Library/Application Support/com.trencseni.delight/settings.json`, Windows:
+  `%APPDATA%\com.trencseni.delight\settings.json` (plus `.window-state.json`). It
+  writes nowhere else.
+- On macOS, the first time you browse into a protected folder (Downloads,
+  Documents, …), the OS asks for permission once, as it does for any app.
 
 ## Platform support
 
-v0.1 targets **macOS**. The codebase is written with cross-platform discipline
-(portable paths, feature fences), so **Windows and Linux** are planned — some
-OS-specific features (Quick Look previews, system icons) will degrade gracefully
-or need platform equivalents. See [CLAUDE.md](CLAUDE.md) for the details.
+**macOS and Windows** both build and run. File previews/thumbnails work on both
+(Windows uses the Shell's image factory), drives are reachable with the Alt+F1/F2
+picker, and ⌘ shortcuts map to Ctrl (file ops use the Norton F-keys). The few
+macOS-only niceties (the standalone Quick Look panel, list/grid system file
+icons, the global menu bar) degrade gracefully on Windows to the vector icons and
+the in-pane preview — the app looks and behaves the same otherwise. Linux is not
+yet built but the code is fenced for it. See [CLAUDE.md](CLAUDE.md) for the
+per-platform status and where each OS difference lives.
 
 ## Tech
 
-Tauri 2 (Rust backend + WKWebView) with a vanilla TypeScript / Vite frontend.
+Tauri 2 (Rust backend + WKWebView on macOS / WebView2 on Windows) with a vanilla
+TypeScript / Vite frontend.
 All filesystem access goes through Rust commands — the webview never touches the
 disk. See [CLAUDE.md](CLAUDE.md) for architecture and [SPEC.md](SPEC.md) for the
 original v0.1 spec.

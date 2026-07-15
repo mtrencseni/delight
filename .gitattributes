@@ -1,0 +1,17 @@
+# Line endings are decided by the repo, not by whatever core.autocrlf each machine
+# happens to default to (Git for Windows sets it to true; macOS leaves it off).
+# Everything is stored as LF in the repo and checked out as LF everywhere, so a
+# commit from Windows can never rewrite every line of a file the Mac then pulls.
+* text=auto eol=lf
+
+# sysicons.ts uses a NUL byte (\x00) as its cache-key separator on purpose, so
+# git auto-detects it as binary. Pin that so it's never line-ending normalized.
+src/sysicons.ts binary
+
+# Binary — never touch these.
+*.png binary
+*.icns binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary

@@ -1,14 +1,17 @@
 import { comboFromEvent, comboHasStrongMod, type CommandId } from "./commands";
+import { MOD } from "./platform";
 
 // While editing a text field, these belong to the field (copy/cut/paste/select/
-// undo/redo) even though they carry a strong modifier — never hijack them.
+// undo/redo) even though they carry a strong modifier — never hijack them. MOD is
+// ⌘ on macOS, Ctrl on Windows/Linux; Ctrl+Y is the extra Windows redo.
 const NATIVE_EDIT = new Set([
-  "Meta+KeyC",
-  "Meta+KeyX",
-  "Meta+KeyV",
-  "Meta+KeyA",
-  "Meta+KeyZ",
-  "Meta+Shift+KeyZ",
+  `${MOD}+KeyC`,
+  `${MOD}+KeyX`,
+  `${MOD}+KeyV`,
+  `${MOD}+KeyA`,
+  `${MOD}+KeyZ`,
+  `${MOD}+Shift+KeyZ`,
+  "Ctrl+KeyY",
 ]);
 
 // When the code preview (a CodeMirror editor) is focused, it owns navigation and

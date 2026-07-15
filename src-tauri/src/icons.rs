@@ -3,6 +3,8 @@
 //! shows); other platforms return None for now (v0.2: Windows SHGetFileInfo,
 //! Linux freedesktop icon themes).
 
+// base64 encoding is reached on macOS (icons + thumbnails) and Windows (thumbnails).
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use base64::Engine;
 use std::path::PathBuf;
 
@@ -22,6 +24,9 @@ pub async fn file_icon(
         .map_err(|e| e.to_string())
 }
 
+// Used by the macOS icon/QuickLook and Windows Shell thumbnail encoders; Linux
+// returns None before reaching it.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn to_data_uri(png: &[u8]) -> String {
     let b64 = base64::engine::general_purpose::STANDARD.encode(png);
     format!("data:image/png;base64,{b64}")

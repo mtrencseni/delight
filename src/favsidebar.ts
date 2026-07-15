@@ -1,5 +1,6 @@
 import type { Location } from "./types";
-import { icons } from "./icons";
+import { driveGlyph, icons } from "./icons";
+import { baseName, isDriveRoot } from "./format";
 import { cachedIconForPath, fetchIconForPath } from "./sysicons";
 
 /** The single-pane mode's fixed left sidebar: the Favorites list, navigating the
@@ -46,7 +47,9 @@ export class FavSidebar {
       grip.addEventListener("mousedown", (e) => this.startDrag(e, item, index));
 
       const ic = el("ficon locicon");
-      if (sys) {
+      if (isDriveRoot(loc.path)) {
+        ic.innerHTML = driveGlyph((loc.name.match(/[A-Za-z0-9]/)?.[0] ?? "?").toUpperCase());
+      } else if (sys) {
         const c = cachedIconForPath(loc.path);
         if (c) this.setImg(ic, c);
         else {
@@ -81,8 +84,7 @@ export class FavSidebar {
     add.addEventListener("click", () => {
       const path = this.host.currentPath();
       if (!path) return;
-      const name = path.split("/").filter(Boolean).pop() || path;
-      this.host.addLocation(path, name);
+      this.host.addLocation(path, baseName(path));
     });
 
     this.el.replaceChildren(head, list, add);

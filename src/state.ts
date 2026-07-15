@@ -1,5 +1,6 @@
 import { invoke } from "./ipc";
 import { COL_KEYS, type ColKey, type Location, type Settings, type Tab, type Visited } from "./types";
+import { COMMANDS, comboLabel, type CommandId } from "./commands";
 
 export const ZOOM_LEVELS = [50, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200];
 export const PREVIEW_SIZES = [512, 1024, 2048];
@@ -99,6 +100,14 @@ export function clearVisited(): void {
 let nextId = 1;
 export function newTabId(): number {
   return nextId++;
+}
+
+/** Platform-correct label for a command's current shortcut (e.g. "⌘T" on macOS,
+ *  "Ctrl+T" on Windows), for button tooltips. Uses the first live binding,
+ *  falling back to the command's first default. "" if the command has none. */
+export function hint(id: CommandId): string {
+  const combo = state.keybindings[id]?.[0] ?? COMMANDS.find((c) => c.id === id)?.defaults[0];
+  return combo ? comboLabel(combo) : "";
 }
 
 /** Sanitize a saved column order: keep valid keys in order, append any missing. */

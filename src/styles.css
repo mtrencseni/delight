@@ -166,12 +166,16 @@ svg {
   background: var(--header); /* distinct strip; active tab flows into content */
 }
 
-/* Native window: the bar is the title bar — inset past the traffic lights
-   (fixed px, since they don't scale with the app's zoom). */
+/* Native window: the bar is the title bar. On macOS it's inset past the traffic
+   lights (fixed px, since they don't scale with the app's zoom) — the Overlay
+   titlebar puts them over the bar. Windows/Linux keep standard window chrome,
+   so no left inset there; only the top padding + min-height for a roomy bar. */
 :root.native .tabbar {
   padding-top: 0.625rem;
-  padding-left: 80px;
   min-height: 2.75rem;
+}
+:root.native.mac .tabbar {
+  padding-left: 80px;
 }
 
 .tabs,
@@ -948,6 +952,19 @@ body.col-resizing * {
   border-color: var(--accent);
 }
 
+/* Embedded PDF preview (the webview's own PDF viewer), fills the preview pane. */
+.panepreview .pp-pdf {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0.5px solid var(--border);
+  border-radius: 0.625rem;
+  background: var(--panel-alt);
+}
+.pane.previewing.is-active .panepreview .pp-pdf {
+  border-color: var(--accent);
+}
+
 /* ---------- grid (icon) view ---------- */
 .pane.grid .listhead {
   display: none;
@@ -1393,6 +1410,27 @@ body.col-resizing * {
   flex-direction: column;
   max-height: 18rem;
   overflow-y: auto;
+}
+
+/* The name-case setting (Settings → original / lower / UPPER) also transforms the
+   path bar and the Favorites labels. Done in CSS (not by rewriting the strings) so
+   the path input keeps its real value for navigation and favorites keep their real
+   paths — only the rendered glyphs change. */
+:root[data-name-case="lower"] .pathinput,
+:root[data-name-case="lower"] .locname {
+  text-transform: lowercase;
+}
+:root[data-name-case="upper"] .pathinput,
+:root[data-name-case="upper"] .locname {
+  text-transform: uppercase;
+}
+
+/* Header for the drive picker (Alt+F1/F2), which reuses the .locpop popover. */
+.drivehead {
+  padding: 0.25rem 0.375rem 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-dim);
 }
 
 .locitem {

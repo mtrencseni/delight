@@ -103,7 +103,7 @@ fn remove_any(p: &Path) -> io::Result<()> {
 
 /// Reject moving/copying a folder into itself or one of its own descendants.
 fn ensure_not_into_self(src: &Path, dest_dir: &Path, name: &str) -> Result<(), String> {
-    let (src_c, dest_c) = match (fs::canonicalize(src), fs::canonicalize(dest_dir)) {
+    let (src_c, dest_c) = match (dunce::canonicalize(src), dunce::canonicalize(dest_dir)) {
         (Ok(a), Ok(b)) => (a, b),
         _ => return Ok(()), // can't resolve → let the copy attempt surface any error
     };
@@ -115,7 +115,7 @@ fn ensure_not_into_self(src: &Path, dest_dir: &Path, name: &str) -> Result<(), S
 
 /// True if `src`'s parent is `dest_dir` (copy/move within the same folder).
 fn same_folder(src: &Path, dest_dir: &Path) -> bool {
-    match (src.parent().map(fs::canonicalize), Some(fs::canonicalize(dest_dir))) {
+    match (src.parent().map(dunce::canonicalize), Some(dunce::canonicalize(dest_dir))) {
         (Some(Ok(a)), Some(Ok(b))) => a == b,
         _ => false,
     }

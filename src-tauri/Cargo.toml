@@ -16,7 +16,7 @@ cc = "1"
 [dependencies]
 # `devtools` keeps the WKWebView Web Inspector available in release builds
 # (gated at runtime by the "Enable developer tools" setting).
-tauri = { version = "2", features = ["devtools"] }
+tauri = { version = "2", features = ["protocol-asset", "devtools"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
@@ -24,6 +24,9 @@ tauri-plugin-drag = "2.1.1"
 tauri-plugin-window-state = "2.4.1"
 # Cross-platform "move to Trash/Recycle Bin" for the delete operation.
 trash = "5"
+# canonicalize without the Windows \\?\ verbatim prefix (no-op elsewhere), so the
+# path bar shows C:\Users\… not \\?\C:\Users\…. Only simplifies when it's safe.
+dunce = "1"
 
 # Owner name resolution (uid -> username) on Unix.
 [target.'cfg(unix)'.dependencies]
@@ -47,6 +50,17 @@ objc2-app-kit = { version = "0.3", features = [
     "NSGraphics",
 ] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+
+# Windows: drive enumeration (Alt+F1/F2 picker) + Shell thumbnails (file preview).
+[target.'cfg(windows)'.dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+    "Win32_Graphics_Gdi",
+] }
 
 [profile.release]
 strip = true

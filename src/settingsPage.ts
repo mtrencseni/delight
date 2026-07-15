@@ -1,6 +1,7 @@
 import type { Settings, Theme } from "./types";
-import { CODE_PREVIEW_BYTES, PREVIEW_SIZES, VISITED_SIZES, ZOOM_LEVELS } from "./state";
+import { CODE_PREVIEW_BYTES, hint, PREVIEW_SIZES, VISITED_SIZES, ZOOM_LEVELS } from "./state";
 import { icons } from "./icons";
+import { isMac } from "./platform";
 
 export interface SettingsHooks {
   get(): Settings;
@@ -197,9 +198,9 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
 
   section(
     "Appearance",
-    row("Theme", "Light, dark, or follow macOS", seg),
-    row("Show hidden files", "Dotfiles in both panes — ⌘⇧.", hiddenSw),
-    row("Default zoom", "Startup zoom level — ⌘0 returns here", stepper)
+    row("Theme", `Light, dark, or follow ${isMac ? "macOS" : "the system"}`, seg),
+    row("Show hidden files", `Dotfiles in both panes — ${hint("toggleHidden")}`, hiddenSw),
+    row("Default zoom", `Startup zoom level — ${hint("zoomReset")} returns here`, stepper)
   );
 
   section(
@@ -255,7 +256,7 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
 
   section(
     "Advanced",
-    row("Enable developer tools", "Toggle the Web Inspector with ⌥⌘I", devToolsSw)
+    row("Enable developer tools", `Toggle the Web Inspector with ${hint("devtools")}`, devToolsSw)
   );
 
   const setSwitch = (s: HTMLElement, on: boolean) => {

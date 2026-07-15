@@ -63,3 +63,16 @@ export function recency(ms: number | null): "justnow" | "today" | "yesterday" | 
 export function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
+
+/** The final path component (folder name), handling both `/` and `\` separators
+ *  and trailing slashes — so `C:\Users\demo` → `demo` and `C:\` → `C:`, not the
+ *  whole path. Falls back to the input when there's nothing to trim. */
+export function baseName(path: string): string {
+  const parts = path.split(/[\\/]+/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : path;
+}
+
+/** True for a bare drive root like `C:\`, `D:/`, or `C:` (Windows). */
+export function isDriveRoot(path: string): boolean {
+  return /^[A-Za-z]:[\\/]?$/.test(path);
+}

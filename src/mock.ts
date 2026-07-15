@@ -331,7 +331,12 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
     }
 
     case "fs_roots":
-      return [{ name: SEP, path: SEP }] as T;
+      // Two entries so the drive picker's list + keyboard nav can be exercised in
+      // the browser harness (the real backend enumerates actual drives).
+      return [
+        { name: SEP, path: SEP },
+        { name: "C:", path: "C:\\" },
+      ] as T;
     case "dropbox_dir":
       return (HOME + "/Dropbox") as T;
     case "load_state": {

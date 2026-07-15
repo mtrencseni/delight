@@ -1,6 +1,7 @@
 import "./styles.css";
 import { invoke, isTauri, onEvent } from "./ipc";
-import { clearVisited, CODE_PREVIEW_BYTES, GRID_DEFAULT, GRID_MAX, GRID_MIN, newTabId, normalizeColumnOrder, persist, PREVIEW_SIZES, rebuildVisitedIndex, state, VISITED_SIZES, ZOOM_LEVELS } from "./state";
+import { clearVisited, CODE_PREVIEW_BYTES, GRID_DEFAULT, GRID_MAX, GRID_MIN, hint, newTabId, normalizeColumnOrder, persist, PREVIEW_SIZES, rebuildVisitedIndex, state, VISITED_SIZES, ZOOM_LEVELS } from "./state";
+import { isMac } from "./platform";
 import type { PaneState, SortDir, SortKey, Tab, Theme } from "./types";
 import { PaneView } from "./pane";
 import { FavSidebar } from "./favsidebar";
@@ -12,7 +13,7 @@ import { confirmDialog, promptDialog } from "./dialog";
 import { icons } from "./icons";
 import { buildSettingsPage, type SettingsPage } from "./settingsPage";
 import { buildKeybindingsPage, type KeybindingsPage } from "./keybindingsPage";
-import { clamp } from "./format";
+import { baseName, clamp } from "./format";
 
 interface TabView {
   el: HTMLElement;
@@ -55,6 +56,7 @@ class App {
     ]);
     this.home = home;
     this.restoreSettings(saved);
+    document.documentElement.dataset.nameCase = state.settings.nameCase; // .pathinput / .locname case
     state.keybindings = mergeKeybindings(saved?.keybindings);
     state.columnOrder = normalizeColumnOrder(saved?.columnOrder);
     // Global column widths (fall back per-key to the defaults, and to an older
@@ -72,14 +74,20 @@ class App {
       };
     }
 
-    // Restore saved locations; default to just the user's home.
+    // Restore saved locations; default to just the user's home. Re-derive any
+    // name that looks like a path (a stale full-path name from before names were
+    // split cross-platform — Windows `\` paths used to fall through as the whole
+    // path) so favorites always read as the folder name.
     const savedLocs = Array.isArray(saved?.locations) ? saved.locations : null;
     state.locations =
       savedLocs
         ?.filter((l: any) => typeof l?.path === "string" && typeof l?.name === "string")
-        .map((l: any) => ({ path: l.path, name: l.name })) ?? [];
+        .map((l: any) => ({
+          path: l.path,
+          name: /[\\/]/.test(l.name) ? baseName(l.path) : l.name,
+        })) ?? [];
     if (state.locations.length === 0) {
-      state.locations = [{ path: home, name: home.split("/").filter(Boolean).pop() || "Home" }];
+      state.locations = [{ path: home, name: baseName(home) || "Home" }];
     }
 
     // Restore the recent-folders (visited) cache.
@@ -194,6 +202,8 @@ class App {
       },
       favoritesLeft: () => this.openFavorites(0),
       favoritesRight: () => this.openFavorites(1),
+      drivesLeft: () => this.openDrives(0),
+      drivesRight: () => this.openDrives(1),
     };
     this.rebuildComboMap();
     initKeyboard({
@@ -203,6 +213,16 @@ class App {
 
     // Quick Look reports its current item as the user arrows; follow it.
     onEvent<number>("ql-index", (idx) => this.previewPane?.applyPreviewIndex(idx));
+
+    // The native window starts hidden (visible: false) to avoid a white flash
+    // while the page loads. Now that the shell is built and the first tab is
+    // rendered, reveal it after two animation frames (one to lay out, one to
+    // paint). No-op in the browser; the backend has a 3s failsafe either way.
+    if (isTauri) {
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => void invoke("show_main_window").catch(() => {}))
+      );
+    }
   }
 
   private restoreSettings(saved: any): void {
@@ -239,24 +259,28 @@ class App {
 
   private buildShell(): void {
     const root = document.getElementById("app")!;
-    // Native window: the tab bar doubles as the OS title bar (traffic lights
-    // overlaid top-left). The class enables the left inset; the browser
-    // preview stays a normal full-width bar.
-    if (isTauri) document.documentElement.classList.add("native");
+    // Native window: the tab bar doubles as the OS title bar. On macOS the
+    // traffic lights overlay it top-left (the `.mac` class enables the left
+    // inset); Windows/Linux keep standard window chrome, so no inset. The
+    // browser preview stays a normal full-width bar.
+    if (isTauri) {
+      document.documentElement.classList.add("native");
+      if (isMac) document.documentElement.classList.add("mac");
+    }
     const tabbar = el("div", "tabbar");
     tabbar.setAttribute("data-tauri-drag-region", "");
 
     const newBtn = el("button", "tbtn");
     newBtn.innerHTML = icons.plus;
-    newBtn.title = "New tab (⌘T)";
+    newBtn.title = `New tab (${hint("newTab")})`;
     newBtn.addEventListener("click", () => void this.newTab());
 
     this.eyeBtn.innerHTML = icons.eye;
-    this.eyeBtn.title = "Show hidden files (⌘⇧.)";
+    this.eyeBtn.title = `Show hidden files (${hint("toggleHidden")})`;
     this.eyeBtn.addEventListener("click", () => this.toggleHidden());
 
     this.spBtn.innerHTML = icons.sidebar;
-    this.spBtn.title = "Single-pane view (⌘P)";
+    this.spBtn.title = `Single-pane view (${hint("toggleSingle")})`;
     this.spBtn.addEventListener("click", () => this.toggleSingle());
 
     this.themeBtn.addEventListener("click", () => this.toggleTheme());
@@ -264,12 +288,12 @@ class App {
     onThemeChange(() => this.syncThemeBtn());
 
     this.devBtn.innerHTML = icons.code;
-    this.devBtn.title = "Developer tools (⌥⌘I)";
+    this.devBtn.title = `Developer tools (${hint("devtools")})`;
     this.devBtn.addEventListener("click", () => void invoke("toggle_devtools").catch(() => {}));
 
     const gearBtn = el("button", "tbtn");
     gearBtn.innerHTML = icons.gear;
-    gearBtn.title = "Settings (⌘,)";
+    gearBtn.title = `Settings (${hint("openSettings")})`;
     gearBtn.addEventListener("click", () => this.addSettingsTab(true));
 
     const spacer = el("div", "flexspace");
@@ -501,6 +525,7 @@ class App {
       },
       onPreviewSize: (n) => {
         state.settings.previewSize = n;
+        this.refreshPanePreview(); // re-fetch the open preview at the new resolution
         persist();
       },
       onCodePreviewBytes: (n) => {
@@ -520,6 +545,7 @@ class App {
       },
       onNameCase: (c) => {
         state.settings.nameCase = c;
+        document.documentElement.dataset.nameCase = c; // drives .pathinput / .locname CSS
         for (const view of this.views.values()) view.panes?.forEach((p) => p.renderRows());
         persist();
       },
@@ -705,7 +731,7 @@ class App {
     title.textContent = this.tabTitle(tab);
     const close = el("span", "tabclose");
     close.innerHTML = icons.close;
-    close.title = "Close tab (⌘W)";
+    close.title = `Close tab (${hint("closeTab")})`;
     t.append(title, close);
     t.addEventListener("mousedown", (e) => {
       if (e.button !== 0 || (e.target as HTMLElement).closest(".tabclose")) return;
@@ -1125,12 +1151,20 @@ class App {
 
   /** ⌘1 / ⌘2: open the left/right pane's Favorites dropdown. */
   private openFavorites(index: 0 | 1): boolean {
-    const tab = state.tabs[state.activeTab];
-    if (!tab?.panes) return false;
-    const p = this.views.get(tab.id)?.panes?.[index];
-    if (!p) return false;
-    p.openFavorites();
-    return true;
+    const panes = this.views.get(state.tabs[state.activeTab]?.id ?? -1)?.panes;
+    if (!panes) return false;
+    panes[index === 0 ? 1 : 0]?.closeAllPopovers(); // only one popover open at a time
+    panes[index]?.openFavorites();
+    return !!panes[index];
+  }
+
+  /** Alt+F1 / Alt+F2 (Windows): open the left/right pane's drive-letter picker. */
+  private openDrives(index: 0 | 1): boolean {
+    const panes = this.views.get(state.tabs[state.activeTab]?.id ?? -1)?.panes;
+    if (!panes) return false;
+    panes[index === 0 ? 1 : 0]?.closeAllPopovers(); // close the other pane's picker first
+    panes[index]?.openDrives();
+    return !!panes[index];
   }
 
   // ---- keyboard bindings -----------------------------------------------------

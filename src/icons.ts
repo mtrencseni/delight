@@ -45,6 +45,8 @@ export const icons = {
     '<rect x="2" y="2.5" width="12" height="5.5" rx="1.2"/><path d="M2.5 10.6h11M2.5 13h7"/>'
   ),
   bookmarks: svg('<path d="M4 2.5h8v11l-4-2.6-4 2.6z"/>'),
+  // A disk drive: a rounded body with an activity light (for the drive picker).
+  drive: svg('<rect x="2" y="4.5" width="12" height="7" rx="1.3"/><circle cx="11.5" cy="8" r="0.9"/><path d="M4.5 8h3"/>'),
   // Single-pane layout: an outer frame with a narrow left sidebar rail.
   sidebar: svg('<rect x="2" y="3" width="12" height="10" rx="1.4"/><path d="M6 3v10"/>'),
   house: svg('<path d="M2.5 7.5 8 3l5.5 4.5"/><path d="M4 6.9V13h8V6.9"/>'),
@@ -57,6 +59,17 @@ export const icons = {
     '<rect x="1.75" y="4" width="12.5" height="8" rx="1.4"/><path d="M4 6.4h0M6.2 6.4h0M8.4 6.4h0M10.6 6.4h0M4 8.6h0M12 6.4h0M5.5 9.9h5" stroke-width="1.6"/>'
   ),
 };
+
+/** A drive glyph with its letter set on the body — for the drive picker and any
+    drive-root favorite. `letter` is a single character (the drive letter). */
+export function driveGlyph(letter: string): string {
+  return (
+    `<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round">` +
+    `<rect x="1.5" y="4.5" width="13" height="7" rx="1.4"/>` +
+    `<text x="8" y="9.55" font-size="4.8" text-anchor="middle" fill="currentColor" stroke="none" font-family="ui-sans-serif, system-ui, sans-serif" font-weight="700">${letter}</text>` +
+    `</svg>`
+  );
+}
 
 // ---- filetype icons ---------------------------------------------------------
 

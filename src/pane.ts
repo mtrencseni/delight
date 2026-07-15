@@ -1,8 +1,8 @@
-import { invoke, isTauri } from "./ipc";
+import { assetUrl, invoke, isTauri } from "./ipc";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import type { ChildEntry, ColKey, ColWidths, Details, Entry, Listing, Location, PaneState, SortDir, SortKey, ViewMode } from "./types";
-import { clamp, fmtDate, humanSize, recency } from "./format";
-import { fileIcon, icons } from "./icons";
+import { baseName, clamp, fmtDate, humanSize, isDriveRoot, recency } from "./format";
+import { driveGlyph, fileIcon, icons } from "./icons";
 import { CodePreview, langForTextFile } from "./codepreview";
 import type { LangId } from "./langs";
 import {
@@ -111,6 +111,10 @@ export class PaneView {
   private locPop: HTMLElement | null = null;
   /** Keyboard-highlighted favorite in the open dropdown. */
   private locActive = 0;
+  /** Windows drive-letter picker (Alt+F1/F2) — parallel to the favorites popover. */
+  private drivePop: HTMLElement | null = null;
+  private driveActive = 0;
+  private driveList: { name: string; path: string }[] = [];
   private headCells = new Map<SortKey, HTMLElement>();
   private view: ViewRow[] = [];
   private lastClick = { i: -1, t: 0 };
@@ -1882,6 +1886,15 @@ export class PaneView {
     this.previewKey = key;
     clearTimeout(this.previewTimer);
 
+    // PDF → embed the native PDF viewer (crisp + scrollable) via the asset
+    // protocol, instead of the OS thumbnail (which Windows caps at 256px). Native
+    // only; the browser mock has no asset protocol, so PDFs fall through to the
+    // thumbnail path below there.
+    if (isTauri && entry !== UP_ENTRY && !entry.isDir && /\.pdf$/i.test(entry.name)) {
+      this.showPdfPreview(entry, dirPath);
+      return;
+    }
+
     // Known text file → render it read-only in CodeMirror (Buffers look-and-feel)
     // rather than a thumbnail. Only the first N bytes are read (a setting).
     if (entry !== UP_ENTRY && !entry.isDir) {
@@ -2018,6 +2031,21 @@ export class PaneView {
     this.el.closest(".dual")?.classList.toggle("code-focused", focused);
   }
 
+  /** Embed a PDF in the preview pane via the webview's own PDF viewer (WebView2
+      on Windows, WKWebView on macOS), loaded straight from disk through the asset
+      protocol — crisp and scrollable, unlike the OS thumbnail. */
+  private showPdfPreview(entry: Entry, dirPath: string): void {
+    this.detachCodePreview();
+    const sep = dirPath.includes("\\") ? "\\" : "/";
+    const full = dirPath.replace(/[\\/]+$/, "") + sep + entry.name;
+    const frame = document.createElement("iframe");
+    frame.className = "pp-pdf";
+    frame.src = assetUrl(full);
+    this.previewEl.replaceChildren(frame);
+    this.previewEl.classList.remove("hidden");
+    this.el.classList.add("previewing");
+  }
+
   /** Remove the code preview's editor from the DOM (kept alive for reuse). */
   private detachCodePreview(): void {
     if (this.codePreview) this.codePreview.dom.remove();
@@ -2102,7 +2130,138 @@ export class PaneView {
 
   /** Open/close this pane's Favorites dropdown (⌘1 / ⌘2, or the toolbar button). */
   openFavorites(): void {
+    this.closeDrives();
     this.toggleLocations();
+  }
+
+  /** Close this pane's popovers (favorites + drive picker). The app calls this on
+      the *other* pane before opening a picker, so only one is ever open — e.g.
+      Alt+F1 then Alt+F2 closes the left picker as the right one opens. */
+  closeAllPopovers(): void {
+    this.closeLocations();
+    this.closeDrives();
+  }
+
+  /** Alt+F1 / Alt+F2 (Windows): a dropdown of drive letters; picking one (click
+      or Enter) navigates this pane to that drive's root. Mirrors the favorites
+      popover but is read-only (no add/remove/reorder). */
+  openDrives(): void {
+    if (this.drivePop) {
+      this.closeDrives();
+      return;
+    }
+    this.closeLocations();
+    this.host.activate(this);
+    void invoke<{ name: string; path: string }[]>("fs_roots")
+      .then((drives) => {
+        this.driveList = Array.isArray(drives) ? drives : [];
+        const cur = this.st.path.toUpperCase();
+        const at = this.driveList.findIndex((d) => cur.startsWith(d.path.toUpperCase()));
+        this.driveActive = at >= 0 ? at : 0;
+        this.renderDrives();
+      })
+      .catch(() => {});
+  }
+
+  private closeDrives(): void {
+    this.drivePop?.remove();
+    this.drivePop = null;
+    document.removeEventListener("mousedown", this.onDriveDocDown, true);
+  }
+
+  private onDriveDocDown = (e: MouseEvent) => {
+    if (this.drivePop && !this.drivePop.contains(e.target as Node)) this.closeDrives();
+  };
+
+  private renderDrives(): void {
+    const pop = div("locpop drivepop");
+    const head = div("drivehead");
+    head.textContent = "Drives";
+    const list = div("loclist");
+
+    this.driveList.forEach((d, index) => {
+      const item = div("locitem" + (index === this.driveActive ? " active" : ""));
+      item.dataset.index = String(index);
+      item.addEventListener("mouseenter", () => this.setDriveActive(index));
+      const ic = div("ficon locicon");
+      ic.innerHTML = driveGlyph((d.name.match(/[A-Za-z0-9]/)?.[0] ?? "?").toUpperCase());
+      const label = document.createElement("span");
+      label.className = "locname";
+      label.textContent = d.name;
+      label.title = d.path;
+      item.append(ic, label);
+      item.addEventListener("click", () => {
+        this.closeDrives();
+        void this.navigate(d.path);
+      });
+      list.append(item);
+    });
+    if (this.driveList.length === 0) {
+      const empty = div("locitem");
+      empty.textContent = "No drives";
+      list.append(empty);
+    }
+
+    pop.tabIndex = -1;
+    pop.addEventListener("keydown", (e) => this.onDriveKey(e));
+    pop.append(head, list);
+    this.drivePop?.remove();
+    this.el.append(pop);
+    this.drivePop = pop;
+    pop.focus({ preventScroll: true });
+    document.addEventListener("mousedown", this.onDriveDocDown, true);
+  }
+
+  private setDriveActive(i: number): void {
+    if (!this.drivePop) return;
+    const items = [...this.drivePop.querySelectorAll<HTMLElement>(".locitem")];
+    if (items.length === 0) return;
+    this.driveActive = clamp(i, 0, this.driveList.length - 1);
+    items.forEach((el, j) => el.classList.toggle("active", j === this.driveActive));
+    items[this.driveActive]?.scrollIntoView({ block: "nearest" });
+  }
+
+  private onDriveKey(e: KeyboardEvent): void {
+    const n = this.driveList.length;
+    if (n === 0) {
+      if (e.key === "Escape") this.closeDrives();
+      return;
+    }
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        e.stopPropagation();
+        this.setDriveActive((this.driveActive + 1) % n);
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        e.stopPropagation();
+        this.setDriveActive((this.driveActive - 1 + n) % n);
+        break;
+      case "Home":
+        e.preventDefault();
+        e.stopPropagation();
+        this.setDriveActive(0);
+        break;
+      case "End":
+        e.preventDefault();
+        e.stopPropagation();
+        this.setDriveActive(n - 1);
+        break;
+      case "Enter": {
+        e.preventDefault();
+        e.stopPropagation();
+        const d = this.driveList[this.driveActive];
+        this.closeDrives();
+        if (d) void this.navigate(d.path);
+        break;
+      }
+      case "Escape":
+        e.preventDefault();
+        e.stopPropagation();
+        this.closeDrives();
+        break;
+    }
   }
 
   private toggleLocations(): void {
@@ -2142,7 +2301,9 @@ export class PaneView {
       grip.addEventListener("click", (e) => e.stopPropagation());
       grip.addEventListener("mousedown", (e) => this.startFavDrag(e, item, index));
       const ic = div("ficon locicon");
-      if (sys) {
+      if (isDriveRoot(loc.path)) {
+        ic.innerHTML = driveGlyph((loc.name.match(/[A-Za-z0-9]/)?.[0] ?? "?").toUpperCase());
+      } else if (sys) {
         const c = cachedIconForPath(loc.path);
         if (c) this.setSysImg(ic, c);
         else {
@@ -2179,7 +2340,7 @@ export class PaneView {
     add.innerHTML = `${icons.plus}<span>Add current</span>`;
     add.addEventListener("click", (e) => {
       e.stopPropagation();
-      const name = this.st.listing?.name || this.st.path;
+      const name = this.st.listing?.name || baseName(this.st.path);
       this.host.addLocation(this.st.path, name);
       this.openLocations();
     });

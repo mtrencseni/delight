@@ -22,11 +22,26 @@ fn native_roots() -> Vec<FsRoot> {
 
 #[cfg(windows)]
 fn native_roots() -> Vec<FsRoot> {
-    // v0.2: enumerate drive letters via GetLogicalDrives. Stub for now.
-    vec![FsRoot {
-        name: "C:".to_string(),
-        path: format!("C:{}", std::path::MAIN_SEPARATOR),
-    }]
+    // GetLogicalDrives returns a bitmask of the mounted drive letters (bit 0 = A,
+    // …, bit 25 = Z) without touching the drives themselves — no floppy spin-up,
+    // no per-letter existence probe. Powers the Alt+F1 / Alt+F2 drive picker.
+    use windows::Win32::Storage::FileSystem::GetLogicalDrives;
+    let mask = unsafe { GetLogicalDrives() };
+    let mut roots: Vec<FsRoot> = (0..26u32)
+        .filter(|i| mask & (1 << i) != 0)
+        .map(|i| {
+            let letter = (b'A' + i as u8) as char;
+            FsRoot {
+                name: format!("{letter}:"),
+                path: format!("{letter}:\\"),
+            }
+        })
+        .collect();
+    if roots.is_empty() {
+        // Should never happen (C: is always present), but never hand back nothing.
+        roots.push(FsRoot { name: "C:".to_string(), path: "C:\\".to_string() });
+    }
+    roots
 }
 
 #[tauri::command]

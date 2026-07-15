@@ -82,12 +82,33 @@ fn expand_home(input: &str, home: Option<&PathBuf>) -> PathBuf {
     PathBuf::from(input)
 }
 
+/// Whether an entry should be treated as hidden (folded away unless "show hidden"
+/// is on). Unix: dotfiles. Windows: the HIDDEN or SYSTEM file attribute — which is
+/// how Windows actually marks `$Recycle.Bin`, `System Volume Information`,
+/// `pagefile.sys`, `desktop.ini`, … (dotfiles are still honored too, for tools
+/// that create them). `meta` is the entry's own metadata (symlinks not followed).
+#[cfg(windows)]
+fn is_hidden(name: &str, meta: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+    const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
+    name.starts_with('.') || meta.file_attributes() & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM) != 0
+}
+
+#[cfg(not(windows))]
+fn is_hidden(name: &str, _meta: &std::fs::Metadata) -> bool {
+    name.starts_with('.')
+}
+
 fn read_listing(path: String, child: Option<String>, home: Option<PathBuf>) -> Result<Listing, String> {
     let mut p = expand_home(path.trim(), home.as_ref());
     if let Some(c) = child {
         p.push(c);
     }
-    let p = fs::canonicalize(&p).map_err(|e| friendly_io(&e))?;
+    // dunce::canonicalize == fs::canonicalize but strips Windows' \\?\ verbatim
+    // prefix (no-op on Unix), so the path we hand back to the UI is the ordinary
+    // C:\… form users expect — and every downstream join/compare stays uniform.
+    let p = dunce::canonicalize(&p).map_err(|e| friendly_io(&e))?;
     let rd = fs::read_dir(&p).map_err(|e| friendly_io(&e))?;
 
     let mut entries = Vec::new();
@@ -119,7 +140,7 @@ fn read_listing(path: String, child: Option<String>, home: Option<PathBuf>) -> R
                 as_path.extension().map(|e| e.to_string_lossy().into_owned()),
             )
         };
-        let hidden = name.starts_with('.');
+        let hidden = is_hidden(&name, &smeta);
         entries.push(Entry {
             name,
             stem,
@@ -275,4 +296,19 @@ pub async fn read_text_file(dir: String, name: String, max_bytes: usize) -> Resu
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[cfg(all(test, windows))]
+mod hidden_tests {
+    use super::is_hidden;
+
+    // ProgramData carries the HIDDEN+SYSTEM attributes on every stock Windows;
+    // the Windows dir does not. Confirms is_hidden reads the attribute, not a name.
+    #[test]
+    fn honors_windows_hidden_attribute() {
+        let hidden = std::fs::symlink_metadata(r"C:\ProgramData").unwrap();
+        assert!(is_hidden("ProgramData", &hidden), "ProgramData should read hidden");
+        let visible = std::fs::symlink_metadata(r"C:\Windows").unwrap();
+        assert!(!is_hidden("Windows", &visible), "Windows should not read hidden");
+    }
 }

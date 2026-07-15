@@ -1,6 +1,13 @@
-import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke as tauriInvoke } from "@tauri-apps/api/core";
 
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+/** Turn an absolute file path into an `asset:`/`http://asset.localhost` URL the
+ *  webview can load directly — used to embed PDFs in the preview via the native
+ *  PDF viewer. Only meaningful under Tauri (the asset protocol must be enabled). */
+export function assetUrl(path: string): string {
+  return convertFileSrc(path);
+}
 
 let mock: Promise<typeof import("./mock")> | null = null;
 

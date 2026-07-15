@@ -3,6 +3,8 @@
 // bindings. Effective bindings live in state.keybindings (persisted); the
 // keyboard handler matches a pressed combo against them and runs the command.
 
+import { MOD, isMac } from "./platform";
+
 export type CommandId =
   | "newTab"
   | "closeTab"
@@ -48,78 +50,96 @@ export type CommandId =
   | "closePreview"
   | "devtools"
   | "favoritesLeft"
-  | "favoritesRight";
+  | "favoritesRight"
+  | "drivesLeft"
+  | "drivesRight";
 
 export interface Command {
   id: CommandId;
   label: string;
   group: string;
-  /** Default bindings, as canonical combo strings (e.g. "Meta+KeyT"). */
+  /** Default bindings, as canonical combo strings (e.g. `${MOD}+KeyT`). MOD is
+   *  "Meta" (⌘) on macOS and "Ctrl" everywhere else, so every ⌘-shortcut maps to
+   *  Ctrl on Windows/Linux. Genuine Ctrl bindings (e.g. Ctrl+Tab) stay literal. */
   defaults: string[];
 }
 
 export const COMMANDS: Command[] = [
   // Tabs
-  { id: "newTab", label: "New tab", group: "Tabs", defaults: ["Meta+KeyT"] },
-  { id: "closeTab", label: "Close tab", group: "Tabs", defaults: ["Meta+KeyW"] },
-  { id: "nextTab", label: "Next tab", group: "Tabs", defaults: ["Meta+Shift+BracketRight", "Ctrl+Tab"] },
-  { id: "prevTab", label: "Previous tab", group: "Tabs", defaults: ["Meta+Shift+BracketLeft", "Ctrl+Shift+Tab"] },
-  { id: "cycleTabs", label: "Cycle tabs", group: "Tabs", defaults: ["Meta+Backquote"] },
-  { id: "openSettings", label: "Open settings", group: "Tabs", defaults: ["Meta+Comma"] },
+  { id: "newTab", label: "New tab", group: "Tabs", defaults: [`${MOD}+KeyT`] },
+  { id: "closeTab", label: "Close tab", group: "Tabs", defaults: [`${MOD}+KeyW`] },
+  { id: "nextTab", label: "Next tab", group: "Tabs", defaults: [`${MOD}+Shift+BracketRight`, "Ctrl+Tab"] },
+  { id: "prevTab", label: "Previous tab", group: "Tabs", defaults: [`${MOD}+Shift+BracketLeft`, "Ctrl+Shift+Tab"] },
+  { id: "cycleTabs", label: "Cycle tabs", group: "Tabs", defaults: [`${MOD}+Backquote`] },
+  { id: "openSettings", label: "Open settings", group: "Tabs", defaults: [`${MOD}+Comma`] },
 
   // Panes & navigation
   { id: "switchPane", label: "Switch pane", group: "Panes & navigation", defaults: ["Tab"] },
   { id: "cursorUp", label: "Move up", group: "Panes & navigation", defaults: ["ArrowUp"] },
   { id: "cursorDown", label: "Move down", group: "Panes & navigation", defaults: ["ArrowDown"] },
   // Plain → / ← jump between recent folders (nextVisited/prevVisited); ⌘→ / ⌘←
-  // open / close the in-list tree.
-  { id: "expand", label: "Expand / open folder", group: "Panes & navigation", defaults: ["Meta+ArrowRight"] },
-  { id: "collapse", label: "Collapse / to parent", group: "Panes & navigation", defaults: ["Meta+ArrowLeft"] },
+  // (Ctrl→ / Ctrl← on Windows) open / close the in-list tree.
+  { id: "expand", label: "Expand / open folder", group: "Panes & navigation", defaults: [`${MOD}+ArrowRight`] },
+  { id: "collapse", label: "Collapse / to parent", group: "Panes & navigation", defaults: [`${MOD}+ArrowLeft`] },
   { id: "nextVisited", label: "Next recent folder", group: "Panes & navigation", defaults: ["ArrowRight"] },
   { id: "prevVisited", label: "Previous recent folder", group: "Panes & navigation", defaults: ["ArrowLeft"] },
   { id: "pageUp", label: "Page up", group: "Panes & navigation", defaults: ["PageUp"] },
   { id: "pageDown", label: "Page down", group: "Panes & navigation", defaults: ["PageDown"] },
-  { id: "cursorHome", label: "Jump to top", group: "Panes & navigation", defaults: ["Home", "Meta+ArrowUp"] },
-  { id: "cursorEnd", label: "Jump to bottom", group: "Panes & navigation", defaults: ["End", "Meta+ArrowDown"] },
+  { id: "cursorHome", label: "Jump to top", group: "Panes & navigation", defaults: ["Home", `${MOD}+ArrowUp`] },
+  { id: "cursorEnd", label: "Jump to bottom", group: "Panes & navigation", defaults: ["End", `${MOD}+ArrowDown`] },
   { id: "open", label: "Open", group: "Panes & navigation", defaults: ["Enter"] },
   { id: "up", label: "Go up a folder", group: "Panes & navigation", defaults: ["Backspace"] },
 
-  // File operations (number keys — F-keys aren't single-press on Mac)
-  { id: "copyToOther", label: "Copy to other pane", group: "File operations", defaults: ["Digit5"] },
-  { id: "moveToOther", label: "Move to other pane", group: "File operations", defaults: ["Digit6"] },
-  { id: "rename", label: "Rename", group: "File operations", defaults: ["Shift+Digit6"] },
-  { id: "newFolder", label: "New folder", group: "File operations", defaults: ["Digit7"] },
-  { id: "trash", label: "Move to Trash", group: "File operations", defaults: ["Digit8"] },
+  // File operations. Windows/Linux use the classic Norton Commander / Total
+  // Commander F-keys (F5 copy … F8 delete); macOS uses the number row instead,
+  // since the F-keys there need the Fn modifier to fire as a single press.
+  { id: "copyToOther", label: "Copy to other pane", group: "File operations", defaults: isMac ? ["Digit5"] : ["F5"] },
+  { id: "moveToOther", label: "Move to other pane", group: "File operations", defaults: isMac ? ["Digit6"] : ["F6"] },
+  { id: "rename", label: "Rename", group: "File operations", defaults: isMac ? ["Shift+Digit6"] : ["Shift+F6"] },
+  { id: "newFolder", label: "New folder", group: "File operations", defaults: isMac ? ["Digit7"] : ["F7"] },
+  { id: "trash", label: "Move to Trash", group: "File operations", defaults: isMac ? ["Digit8"] : ["F8"] },
 
   // Selection
   { id: "selectUp", label: "Extend selection up", group: "Selection", defaults: ["Shift+ArrowUp"] },
   { id: "selectDown", label: "Extend selection down", group: "Selection", defaults: ["Shift+ArrowDown"] },
-  { id: "selectAll", label: "Select all", group: "Selection", defaults: ["Meta+KeyA"] },
+  { id: "selectAll", label: "Select all", group: "Selection", defaults: [`${MOD}+KeyA`] },
 
   // Sorting
-  { id: "sortName", label: "Sort by name", group: "Sorting", defaults: ["Meta+KeyN"] },
-  { id: "sortExt", label: "Sort by extension", group: "Sorting", defaults: ["Meta+KeyE"] },
-  { id: "sortSize", label: "Sort by size", group: "Sorting", defaults: ["Meta+KeyS"] },
+  { id: "sortName", label: "Sort by name", group: "Sorting", defaults: [`${MOD}+KeyN`] },
+  { id: "sortExt", label: "Sort by extension", group: "Sorting", defaults: [`${MOD}+KeyE`] },
+  { id: "sortSize", label: "Sort by size", group: "Sorting", defaults: [`${MOD}+KeyS`] },
   // ⌘C is the Chips-view shortcut; sort-by-created moved to ⌘⇧C.
-  { id: "sortCreated", label: "Sort by created", group: "Sorting", defaults: ["Meta+Shift+KeyC"] },
-  { id: "sortModified", label: "Sort by modified", group: "Sorting", defaults: ["Meta+KeyM"] },
+  { id: "sortCreated", label: "Sort by created", group: "Sorting", defaults: [`${MOD}+Shift+KeyC`] },
+  { id: "sortModified", label: "Sort by modified", group: "Sorting", defaults: [`${MOD}+KeyM`] },
 
   // View
-  { id: "viewList", label: "List view", group: "View", defaults: ["Meta+KeyL"] },
-  { id: "viewChips", label: "Chips view", group: "View", defaults: ["Meta+KeyC"] },
-  { id: "viewGrid", label: "Icon view", group: "View", defaults: ["Meta+KeyI"] },
-  { id: "toggleSingle", label: "Single-pane view", group: "View", defaults: ["Meta+KeyP"] },
-  { id: "zoomIn", label: "Zoom in", group: "View", defaults: ["Meta+Equal", "Meta+NumpadAdd"] },
-  { id: "zoomOut", label: "Zoom out", group: "View", defaults: ["Meta+Minus", "Meta+NumpadSubtract"] },
-  { id: "zoomReset", label: "Reset zoom", group: "View", defaults: ["Meta+Digit0", "Meta+Numpad0"] },
-  { id: "toggleHidden", label: "Toggle hidden files", group: "View", defaults: ["Meta+Shift+Period"] },
-  { id: "preview", label: "Preview", group: "View", defaults: ["Space", "Digit3"] },
+  { id: "viewList", label: "List view", group: "View", defaults: [`${MOD}+KeyL`] },
+  { id: "viewChips", label: "Chips view", group: "View", defaults: [`${MOD}+KeyC`] },
+  { id: "viewGrid", label: "Icon view", group: "View", defaults: [`${MOD}+KeyI`] },
+  { id: "toggleSingle", label: "Single-pane view", group: "View", defaults: [`${MOD}+KeyP`] },
+  { id: "zoomIn", label: "Zoom in", group: "View", defaults: [`${MOD}+Equal`, `${MOD}+NumpadAdd`] },
+  { id: "zoomOut", label: "Zoom out", group: "View", defaults: [`${MOD}+Minus`, `${MOD}+NumpadSubtract`] },
+  { id: "zoomReset", label: "Reset zoom", group: "View", defaults: [`${MOD}+Digit0`, `${MOD}+Numpad0`] },
+  { id: "toggleHidden", label: "Toggle hidden files", group: "View", defaults: [`${MOD}+Shift+Period`] },
+  // Space previews everywhere; the secondary key is F3 ("view") on Windows/Linux,
+  // the number row (⌘-free "3") on macOS — matching the file-op key scheme above.
+  { id: "preview", label: "Preview", group: "View", defaults: isMac ? ["Space", "Digit3"] : ["Space", "F3"] },
   { id: "closePreview", label: "Close preview", group: "View", defaults: ["Escape"] },
-  { id: "devtools", label: "Developer tools", group: "View", defaults: ["Meta+Alt+KeyI"] },
+  { id: "devtools", label: "Developer tools", group: "View", defaults: [`${MOD}+Alt+KeyI`] },
 
   // Favorites
-  { id: "favoritesLeft", label: "Favorites — left pane", group: "Favorites", defaults: ["Meta+Digit1"] },
-  { id: "favoritesRight", label: "Favorites — right pane", group: "Favorites", defaults: ["Meta+Digit2"] },
+  { id: "favoritesLeft", label: "Favorites — left pane", group: "Favorites", defaults: [`${MOD}+Digit1`] },
+  { id: "favoritesRight", label: "Favorites — right pane", group: "Favorites", defaults: [`${MOD}+Digit2`] },
+
+  // Drives (Windows/Linux only — a single root on macOS makes a drive picker
+  // meaningless, so these commands aren't registered there). Alt+F1/F2 open a
+  // drive-letter dropdown for the left/right pane, à la Total Commander.
+  ...(isMac
+    ? []
+    : ([
+        { id: "drivesLeft", label: "Drives — left pane", group: "Panes & navigation", defaults: ["Alt+F1"] },
+        { id: "drivesRight", label: "Drives — right pane", group: "Panes & navigation", defaults: ["Alt+F2"] },
+      ] as Command[])),
 ];
 
 /** Group order for the Shortcuts tab (first-seen order in COMMANDS). */
@@ -153,7 +173,12 @@ export function comboHasStrongMod(combo: string): boolean {
   return combo.split("+").some((p) => p === "Meta" || p === "Ctrl" || p === "Alt");
 }
 
-const MOD_SYMBOL: Record<string, string> = { Meta: "⌘", Ctrl: "⌃", Alt: "⌥", Shift: "⇧" };
+// macOS shows glyphs joined tight (⌘⇧.); Windows/Linux spell the modifiers out
+// and join with "+" (Ctrl+Shift+.). MOD_SYMBOL + the join in comboLabel switch
+// on isMac so every displayed shortcut reads naturally per platform.
+const MOD_SYMBOL: Record<string, string> = isMac
+  ? { Meta: "⌘", Ctrl: "⌃", Alt: "⌥", Shift: "⇧" }
+  : { Meta: "Win", Ctrl: "Ctrl", Alt: "Alt", Shift: "Shift" };
 const CODE_SYMBOL: Record<string, string> = {
   ArrowUp: "↑",
   ArrowDown: "↓",
@@ -195,11 +220,13 @@ function keyLabel(code: string): string {
   return CODE_SYMBOL[code] ?? code;
 }
 
-/** Human-readable label for a combo, e.g. "Meta+Shift+Period" -> "⌘⇧.". */
+/** Human-readable label for a combo: "Meta+Shift+Period" -> "⌘⇧." on macOS,
+ *  "Ctrl+Shift+." (words, "+"-joined) on Windows/Linux. */
 export function comboLabel(combo: string): string {
   const parts = combo.split("+");
   const key = parts.pop() ?? "";
-  return parts.map((p) => MOD_SYMBOL[p] ?? p).join("") + keyLabel(key);
+  const mods = parts.map((p) => MOD_SYMBOL[p] ?? p);
+  return isMac ? mods.join("") + keyLabel(key) : [...mods, keyLabel(key)].join("+");
 }
 
 export function defaultKeybindings(): Record<CommandId, string[]> {
@@ -222,8 +249,8 @@ export function mergeKeybindings(saved: unknown): Record<CommandId, string[]> {
     // "jump to top/bottom" combos for configs that predate them — but only if
     // the user hasn't since bound that combo to some other command.
     for (const [id, combo] of [
-      ["cursorHome", "Meta+ArrowUp"],
-      ["cursorEnd", "Meta+ArrowDown"],
+      ["cursorHome", `${MOD}+ArrowUp`],
+      ["cursorEnd", `${MOD}+ArrowDown`],
     ] as const) {
       const usedElsewhere = (Object.entries(base) as [CommandId, string[]][]).some(
         ([cid, combos]) => cid !== id && combos.includes(combo)
@@ -233,12 +260,12 @@ export function mergeKeybindings(saved: unknown): Record<CommandId, string[]> {
     // ⌘C used to be "sort by created" but is now the Chips-view shortcut. If a
     // saved config still holds the old ⌘C-only binding, move sort-created to ⌘⇧C
     // so ⌘C is free for viewChips (whose default we then leave intact).
-    if (base.sortCreated.length === 1 && base.sortCreated[0] === "Meta+KeyC") {
-      base.sortCreated = ["Meta+Shift+KeyC"];
+    if (base.sortCreated.length === 1 && base.sortCreated[0] === `${MOD}+KeyC`) {
+      base.sortCreated = [`${MOD}+Shift+KeyC`];
     }
     // Single-pane view's default moved ⌘⇧P → ⌘P; adopt it for untouched configs.
-    if (base.toggleSingle.length === 1 && base.toggleSingle[0] === "Meta+Shift+KeyP") {
-      base.toggleSingle = ["Meta+KeyP"];
+    if (base.toggleSingle.length === 1 && base.toggleSingle[0] === `${MOD}+Shift+KeyP`) {
+      base.toggleSingle = [`${MOD}+KeyP`];
     }
     // Plain →/← now jump between recent folders (nextVisited/prevVisited); the
     // in-list tree moved to ⌘→ / ⌘←. Strip the old plain-arrow bindings off
@@ -250,14 +277,29 @@ export function mergeKeybindings(saved: unknown): Record<CommandId, string[]> {
     // user has since bound that combo elsewhere): ⌘→/⌘← for the tree, and `3`
     // as a second Preview key alongside Space.
     for (const [id, combo] of [
-      ["expand", "Meta+ArrowRight"],
-      ["collapse", "Meta+ArrowLeft"],
-      ["preview", "Digit3"],
+      ["expand", `${MOD}+ArrowRight`],
+      ["collapse", `${MOD}+ArrowLeft`],
+      ["preview", isMac ? "Digit3" : "F3"],
     ] as const) {
       const usedElsewhere = (Object.entries(base) as [CommandId, string[]][]).some(
         ([cid, combos]) => cid !== id && combos.includes(combo)
       );
       if (!usedElsewhere && !base[id].includes(combo)) base[id].push(combo);
+    }
+    // Windows/Linux: the file-op defaults moved from the macOS number row to the
+    // Norton/Total-Commander F-keys. Upgrade a config saved by an early build
+    // that still holds the sole old number binding (a user who rebound the
+    // command has a different value and is left alone).
+    if (!isMac) {
+      for (const [id, oldCombo, newCombo] of [
+        ["copyToOther", "Digit5", "F5"],
+        ["moveToOther", "Digit6", "F6"],
+        ["rename", "Shift+Digit6", "Shift+F6"],
+        ["newFolder", "Digit7", "F7"],
+        ["trash", "Digit8", "F8"],
+      ] as const) {
+        if (base[id].length === 1 && base[id][0] === oldCombo) base[id] = [newCombo];
+      }
     }
   }
   return base;
