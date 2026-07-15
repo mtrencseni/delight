@@ -3,6 +3,7 @@ mod details;
 mod fs_cmds;
 mod icons;
 mod menu;
+mod ops;
 mod roots;
 mod settings;
 
@@ -15,7 +16,13 @@ pub fn run() {
             fs_cmds::list_dir,
             fs_cmds::home_dir,
             fs_cmds::dir_mtime,
+            fs_cmds::dir_signature,
             fs_cmds::read_text_file,
+            ops::copy_entries,
+            ops::move_entries,
+            ops::rename_entry,
+            ops::create_folder,
+            ops::trash_entries,
             icons::file_icon,
             details::item_details,
             details::file_thumbnail,

@@ -129,6 +129,8 @@ export interface Settings {
   visitedCacheSize: number;
   /** Keep both panes in a tab sorted by the same column/direction. */
   linkedSort: boolean;
+  /** Ask before copy / move / delete operations. */
+  confirmOps: boolean;
   /** Enable the Web Inspector (⌥⌘I). */
   devTools: boolean;
 }

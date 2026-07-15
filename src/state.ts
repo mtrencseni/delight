@@ -39,6 +39,7 @@ export const state = {
     foldersOnTop: true,
     visitedCacheSize: 100,
     linkedSort: true,
+    confirmOps: true,
     devTools: false,
   } as Settings,
   // One global list-view column spec (order + widths), shared across every

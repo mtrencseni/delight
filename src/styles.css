@@ -1853,3 +1853,101 @@ body.fav-dragging * {
   opacity: 1;
   transform: translate(-50%, 0);
 }
+
+/* ---------- modal dialogs (confirm / rename / new folder) ---------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  animation: modalfade 0.12s ease;
+}
+
+@keyframes modalfade {
+  from {
+    opacity: 0;
+  }
+}
+
+.modal {
+  width: min(28rem, 90vw);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.25rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+}
+
+.modal-title {
+  font-size: 0.9375rem;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.modal-msg {
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.modal-input {
+  font: inherit;
+  font-size: 0.875rem;
+  padding: 0.4375rem 0.625rem;
+  background: var(--panel-alt);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 0.4375rem;
+  outline: none;
+}
+.modal-input:focus {
+  border-color: var(--accent);
+}
+.modal-input.bad {
+  border-color: var(--error-text);
+}
+
+.modal-err {
+  min-height: 0.95rem;
+  font-size: 0.75rem;
+  color: var(--error-text);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.modal-btn {
+  font: inherit;
+  font-size: 0.8125rem;
+  padding: 0.375rem 0.875rem;
+  color: var(--text);
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 0.4375rem;
+  transition: background 0.12s ease, filter 0.12s ease;
+}
+.modal-btn:hover {
+  background: var(--hover);
+}
+.modal-btn.primary {
+  color: #fff;
+  background: var(--accent);
+  border-color: transparent;
+}
+.modal-btn.primary.danger {
+  background: var(--error-text);
+}
+.modal-btn.primary:hover {
+  filter: brightness(1.08);
+}

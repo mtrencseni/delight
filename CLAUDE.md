@@ -6,9 +6,11 @@ original intent. User-facing overview is in [README.md](README.md).
 ## What this is
 
 **Delight Commander** ("Delight") — a Total Commander–style dual-pane file
-manager. **v0.1: macOS, strictly read-only** (never mutates the user's files;
-only writes its own settings). Cross-platform (Windows/Linux) is planned — the
-code is written to make that a fill-in-the-blanks job, not a rewrite.
+manager. **macOS.** It was read-only through v0.1; **v0.2 adds file operations**
+(copy / move / rename / new folder / move-to-Trash — see `ops.rs`), each guarded
+and confirmed by default. Everything else is still read-only. Cross-platform
+(Windows/Linux) is planned — the code is written to make that a fill-in-the-blanks
+job, not a rewrite.
 
 **Design principle — "delight":** snappy, keyboard-first, no jank, subtle
 ~120ms animations, its own single design on all platforms (NOT native
@@ -66,6 +68,7 @@ browser. `isTauri` gates native-only calls.
 | `details.rs` | `item_details` (created, owner, permissions, default app, dir count + first children) and `file_thumbnail` (QuickLook via `qlmanage`). Chips view + preview. |
 | `icons.rs` | `file_icon` — system icon as PNG data URI (NSWorkspace). |
 | `actions.rs` | `open_path` (default app), `quicklook`/`quicklook_close` (in-process `QLPreviewPanel`), `toggle_devtools`/`close_devtools` (WKWebView inspector). |
+| `ops.rs` | **The only mutating commands:** `copy_entries`/`move_entries` (recursive; overwrite flag; refuse into-itself; same-folder copy auto-dedups "… copy"), `rename_entry`, `create_folder`, `trash_entries` (via the `trash` crate — never a hard unlink). Driven from `main.ts`'s `doTransfer`/`doRename`/`doNewFolder`/`doTrash` with a `dialog.ts` confirm/prompt (number-key shortcuts 5/6/⇧6/7/8; confirm gated by `settings.confirmOps`). |
 | `roots.rs` | `fs_roots` (filesystem roots abstraction), `dropbox_dir` (reads `~/.dropbox/info.json`). |
 | `settings.rs` | `load_state`/`save_state` — one JSON file in `app_config_dir`, atomic write. |
 | `menu.rs` | Native menu. |
@@ -169,6 +172,8 @@ platform look-alikes.
 
 ## Conventions
 
-- Read-only forever in v0.1 — never add FS-mutating commands without an explicit
-  decision. Match the surrounding code's style (vanilla TS, small modules, inline
-  SVG). Commit only when asked; the user checkpoints directly on `main`.
+- All FS-mutating commands live in `ops.rs` and nowhere else; keep them guarded
+  (validate names, refuse into-itself, never hard-delete — Trash only) and behind
+  the confirm flow. Don't scatter write operations into the other command files.
+  Match the surrounding code's style (vanilla TS, small modules, inline SVG).
+  Commit only when asked; the user checkpoints directly on `main`.

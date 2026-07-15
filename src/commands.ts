@@ -23,6 +23,11 @@ export type CommandId =
   | "cursorEnd"
   | "open"
   | "up"
+  | "copyToOther"
+  | "moveToOther"
+  | "rename"
+  | "newFolder"
+  | "trash"
   | "selectUp"
   | "selectDown"
   | "selectAll"
@@ -79,6 +84,13 @@ export const COMMANDS: Command[] = [
   { id: "open", label: "Open", group: "Panes & navigation", defaults: ["Enter"] },
   { id: "up", label: "Go up a folder", group: "Panes & navigation", defaults: ["Backspace"] },
 
+  // File operations (number keys — F-keys aren't single-press on Mac)
+  { id: "copyToOther", label: "Copy to other pane", group: "File operations", defaults: ["Digit5"] },
+  { id: "moveToOther", label: "Move to other pane", group: "File operations", defaults: ["Digit6"] },
+  { id: "rename", label: "Rename", group: "File operations", defaults: ["Shift+Digit6"] },
+  { id: "newFolder", label: "New folder", group: "File operations", defaults: ["Digit7"] },
+  { id: "trash", label: "Move to Trash", group: "File operations", defaults: ["Digit8"] },
+
   // Selection
   { id: "selectUp", label: "Extend selection up", group: "Selection", defaults: ["Shift+ArrowUp"] },
   { id: "selectDown", label: "Extend selection down", group: "Selection", defaults: ["Shift+ArrowDown"] },
@@ -101,7 +113,7 @@ export const COMMANDS: Command[] = [
   { id: "zoomOut", label: "Zoom out", group: "View", defaults: ["Meta+Minus", "Meta+NumpadSubtract"] },
   { id: "zoomReset", label: "Reset zoom", group: "View", defaults: ["Meta+Digit0", "Meta+Numpad0"] },
   { id: "toggleHidden", label: "Toggle hidden files", group: "View", defaults: ["Meta+Shift+Period"] },
-  { id: "preview", label: "Preview", group: "View", defaults: ["Space"] },
+  { id: "preview", label: "Preview", group: "View", defaults: ["Space", "Digit3"] },
   { id: "closePreview", label: "Close preview", group: "View", defaults: ["Escape"] },
   { id: "devtools", label: "Developer tools", group: "View", defaults: ["Meta+Alt+KeyI"] },
 
@@ -234,9 +246,13 @@ export function mergeKeybindings(saved: unknown): Record<CommandId, string[]> {
     // them (unless the user has bound those combos elsewhere).
     if (base.expand.includes("ArrowRight")) base.expand = base.expand.filter((c) => c !== "ArrowRight");
     if (base.collapse.includes("ArrowLeft")) base.collapse = base.collapse.filter((c) => c !== "ArrowLeft");
+    // Adopt newly-added default combos for configs that predate them (unless the
+    // user has since bound that combo elsewhere): ⌘→/⌘← for the tree, and `3`
+    // as a second Preview key alongside Space.
     for (const [id, combo] of [
       ["expand", "Meta+ArrowRight"],
       ["collapse", "Meta+ArrowLeft"],
+      ["preview", "Digit3"],
     ] as const) {
       const usedElsewhere = (Object.entries(base) as [CommandId, string[]][]).some(
         ([cid, combos]) => cid !== id && combos.includes(combo)

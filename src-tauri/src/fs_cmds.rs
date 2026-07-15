@@ -181,6 +181,52 @@ pub fn dir_mtime(path: String) -> Option<u64> {
         .map(|d| d.as_millis() as u64)
 }
 
+/// An order-independent hash of the directory's entries folding in each one's
+/// name, size, modified time and permissions. Unlike the folder's own mtime
+/// (which only bumps on add/remove/rename), this also changes when an existing
+/// file's content/size or permissions change — so the auto-refresh watcher can
+/// notice in-place edits. Read-only; None if the dir is gone/unreadable.
+#[tauri::command]
+pub fn dir_signature(path: String) -> Option<u64> {
+    let rd = fs::read_dir(&path).ok()?;
+    let mut acc: u64 = 0;
+    let mut count: u64 = 0;
+    for entry in rd.flatten() {
+        count = count.wrapping_add(1);
+        // FNV-1a over this entry's identity + changeable fields.
+        let mut h: u64 = 0xcbf29ce484222325;
+        let mut fold = |v: u64| {
+            h ^= v;
+            h = h.wrapping_mul(0x100000001b3);
+        };
+        for b in entry.file_name().to_string_lossy().bytes() {
+            fold(b as u64);
+        }
+        // DirEntry::metadata does not follow symlinks (lstat-like).
+        if let Ok(m) = entry.metadata() {
+            fold(m.len());
+            let mtime = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            fold(mtime);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fold(m.permissions().mode() as u64);
+            }
+            #[cfg(not(unix))]
+            {
+                fold(m.permissions().readonly() as u64);
+            }
+        }
+        acc = acc.wrapping_add(h); // order-independent across entries
+    }
+    Some(acc.wrapping_add(count.wrapping_mul(0x9e3779b97f4a7c15)))
+}
+
 /// Result of reading a text file for the code preview.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]

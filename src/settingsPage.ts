@@ -28,6 +28,7 @@ export interface SettingsHooks {
   onVisitedCacheSize(n: number): void;
   onClearVisited(): void;
   onLinkedSort(v: boolean): void;
+  onConfirmOps(v: boolean): void;
   onOpenKeybindings(): void;
   onDevTools(v: boolean): void;
 }
@@ -145,6 +146,7 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
   const permsColSw = makeSwitch(() => hooks.get().showPermissions, hooks.onShowPermissions);
   const foldersTopSw = makeSwitch(() => hooks.get().foldersOnTop, hooks.onFoldersOnTop);
   const linkedSortSw = makeSwitch(() => hooks.get().linkedSort, hooks.onLinkedSort);
+  const confirmOpsSw = makeSwitch(() => hooks.get().confirmOps, hooks.onConfirmOps);
 
   // Item-case segmented control (original / lowercase / uppercase).
   const caseSeg = el("div", "seg");
@@ -230,6 +232,11 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     row("Link both panes", "Sort both panes in a tab by the same column", linkedSortSw)
   );
 
+  section(
+    "File operations",
+    row("Confirm before acting", "Ask before Copy (5), Move (6) and Move to Trash (8)", confirmOpsSw)
+  );
+
   const kbBtn = el("button", "linkbtn");
   kbBtn.innerHTML = `${icons.keyboard}<span>Configure shortcuts</span>${icons.chevron}`;
   kbBtn.addEventListener("click", () => hooks.onOpenKeybindings());
@@ -279,6 +286,7 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     setSwitch(permsColSw, s.showPermissions);
     setSwitch(foldersTopSw, s.foldersOnTop);
     setSwitch(linkedSortSw, s.linkedSort);
+    setSwitch(confirmOpsSw, s.confirmOps);
     for (const [val, b] of caseBtns) b.classList.toggle("on", s.nameCase === val);
     setSwitch(devToolsSw, s.devTools);
     val.textContent = `${s.defaultZoom}%`;

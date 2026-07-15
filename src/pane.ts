@@ -276,10 +276,12 @@ export class PaneView {
   // ---- auto-refresh: re-list when the current folder changes on disk ----------
   private watchTimer = 0;
   private watchPath = "";
-  private watchMtime: number | null = null;
+  private watchSig: number | null = null;
 
-  /** Poll the current directory's mtime; re-list (preserving cursor/selection/
-      scroll) when it changes — e.g. a file is added while we're viewing it. */
+  /** Poll a signature of the current directory's entries; re-list (preserving
+      cursor/selection/scroll) when it changes. Uses dir_signature rather than the
+      folder's mtime so it also notices an existing file's size/perms change, not
+      just added/removed entries. */
   private startWatch(): void {
     if (!isTauri) return;
     this.watchTimer = window.setInterval(() => void this.checkDirChanged(), 1500);
@@ -293,18 +295,18 @@ export class PaneView {
     if (!path) return;
     // Don't reload out from under an active interaction.
     if (document.activeElement === this.pathInput) return;
-    const m = await invoke<number | null>("dir_mtime", { path }).catch(() => null);
+    const sig = await invoke<number | null>("dir_signature", { path }).catch(() => null);
     if (path !== this.watchPath) {
-      // Directory changed (navigation) — adopt its mtime without reloading.
+      // Directory changed (navigation) — adopt its signature without reloading.
       this.watchPath = path;
-      this.watchMtime = m;
+      this.watchSig = sig;
       return;
     }
-    if (m != null && this.watchMtime != null && m !== this.watchMtime) {
-      this.watchMtime = m;
+    if (sig != null && this.watchSig != null && sig !== this.watchSig) {
+      this.watchSig = sig;
       void this.softReload();
     } else {
-      this.watchMtime = m;
+      this.watchSig = sig;
     }
   }
 
@@ -1830,6 +1832,42 @@ export class PaneView {
   currentEntry(): { entry: Entry; dirPath: string } | null {
     const r = this.view[this.st.cursor];
     return r ? { entry: r.entry, dirPath: r.dirPath } : null;
+  }
+
+  // ---- file operations: accessors used by the App to drive copy/move/… --------
+
+  /** This pane's current directory path. */
+  currentPath(): string {
+    return this.st.path;
+  }
+
+  /** Selected real items (never ".."), or the cursor item when nothing's selected. */
+  selectedItems(): { dir: string; name: string; isDir: boolean }[] {
+    const idxs = this.selection.size ? [...this.selection] : [this.st.cursor];
+    const out: { dir: string; name: string; isDir: boolean }[] = [];
+    for (const i of idxs) {
+      const r = this.view[i];
+      if (r && r.entry !== UP_ENTRY) out.push({ dir: r.dirPath, name: r.entry.name, isDir: r.entry.isDir });
+    }
+    return out;
+  }
+
+  /** The single cursor item (for rename), never "..". */
+  cursorItem(): { dir: string; name: string; isDir: boolean } | null {
+    const r = this.view[this.st.cursor];
+    if (!r || r.entry === UP_ENTRY) return null;
+    return { dir: r.dirPath, name: r.entry.name, isDir: r.entry.isDir };
+  }
+
+  /** Does the current listing already contain a top-level entry named `name`? */
+  hasEntry(name: string): boolean {
+    return !!this.st.listing?.entries.some((e) => e.name === name);
+  }
+
+  /** Put the cursor (and sole selection) on the entry named `name`, if present. */
+  selectByName(name: string): void {
+    const j = this.view.findIndex((r) => r.depth === 0 && r.entry.name === name);
+    if (j >= 0) this.setCursor(j);
   }
 
   // ---- opposite-pane preview -------------------------------------------------

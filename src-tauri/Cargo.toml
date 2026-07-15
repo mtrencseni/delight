@@ -22,6 +22,8 @@ serde_json = "1"
 base64 = "0.22"
 tauri-plugin-drag = "2.1.1"
 tauri-plugin-window-state = "2.4.1"
+# Cross-platform "move to Trash/Recycle Bin" for the delete operation.
+trash = "5"
 
 # Owner name resolution (uid -> username) on Unix.
 [target.'cfg(unix)'.dependencies]

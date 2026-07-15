@@ -8,6 +8,7 @@ import { initKeyboard } from "./keyboard";
 import { COMMANDS, mergeKeybindings, type CommandId } from "./commands";
 import { applyTheme, effectiveTheme, onThemeChange } from "./theme";
 import { toast } from "./toast";
+import { confirmDialog, promptDialog } from "./dialog";
 import { icons } from "./icons";
 import { buildSettingsPage, type SettingsPage } from "./settingsPage";
 import { buildKeybindingsPage, type KeybindingsPage } from "./keybindingsPage";
@@ -165,6 +166,11 @@ class App {
       cursorEnd: () => this.activePane()?.moveEnd(),
       open: () => this.activePane()?.openCursor(),
       up: () => this.activePane()?.goUp(),
+      copyToOther: () => void this.doTransfer(false),
+      moveToOther: () => void this.doTransfer(true),
+      rename: () => void this.doRename(),
+      newFolder: () => void this.doNewFolder(),
+      trash: () => void this.doTrash(),
       selectUp: () => this.activePane()?.extendCursor(-1),
       selectDown: () => this.activePane()?.extendCursor(1),
       selectAll: () => this.activePane()?.selectAll(),
@@ -225,6 +231,7 @@ class App {
       if (typeof s.foldersOnTop === "boolean") state.settings.foldersOnTop = s.foldersOnTop;
       if (VISITED_SIZES.includes(s.visitedCacheSize)) state.settings.visitedCacheSize = s.visitedCacheSize;
       if (typeof s.linkedSort === "boolean") state.settings.linkedSort = s.linkedSort;
+      if (typeof s.confirmOps === "boolean") state.settings.confirmOps = s.confirmOps;
       if (typeof s.devTools === "boolean") state.settings.devTools = s.devTools;
     }
     state.zoom = ZOOM_LEVELS.includes(saved?.zoom) ? saved.zoom : state.settings.defaultZoom;
@@ -548,6 +555,10 @@ class App {
         }
         persist();
       },
+      onConfirmOps: (v) => {
+        state.settings.confirmOps = v;
+        persist();
+      },
       onDevTools: (v) => {
         state.settings.devTools = v;
         this.syncDevBtn();
@@ -819,6 +830,166 @@ class App {
     const tab = state.tabs[state.activeTab];
     if (!tab?.panes) return null;
     return this.views.get(tab.id)?.panes?.[tab.activePane] ?? null;
+  }
+
+  /** The non-active pane of the current tab (destination for copy/move). */
+  private otherPane(): PaneView | null {
+    const tab = state.tabs[state.activeTab];
+    if (!tab?.panes || tab.single) return null;
+    return this.views.get(tab.id)?.panes?.[tab.activePane === 0 ? 1 : 0] ?? null;
+  }
+
+  // ---- file operations -------------------------------------------------------
+
+  private plural(n: number, one: string): string {
+    return `${n} ${one}${n === 1 ? "" : "s"}`;
+  }
+
+  /** Full child path within `dir` (root-aware), for the into-itself guard. */
+  private childPath(dir: string, name: string): string {
+    return dir.endsWith("/") ? dir + name : `${dir}/${name}`;
+  }
+
+  /** Copy (move=false) or move (move=true) the active pane's selection into the
+      other pane's folder — Norton Commander F5/F6. */
+  private async doTransfer(move: boolean): Promise<void> {
+    const src = this.activePane();
+    const dst = this.otherPane();
+    if (!src || !dst) {
+      toast("Needs two panes");
+      return;
+    }
+    const items = src.selectedItems();
+    if (!items.length) return;
+    const destDir = dst.currentPath();
+    const verb = move ? "Move" : "Copy";
+
+    // Guard: don't put a folder inside itself or a descendant of itself.
+    for (const it of items) {
+      const p = this.childPath(it.dir, it.name);
+      if (it.isDir && (destDir === p || destDir.startsWith(p + "/"))) {
+        toast(`Can’t ${verb.toLowerCase()} “${it.name}” into itself`);
+        return;
+      }
+    }
+    const sameDir = items[0].dir === destDir;
+    if (move && sameDir) {
+      toast("Already in that folder");
+      return;
+    }
+
+    // Conflicts = items whose name already exists in the destination (the other
+    // pane's listing is in memory). Same-dir copies auto-rename, so never clash.
+    const conflicts = sameDir ? [] : items.filter((it) => dst.hasEntry(it.name)).map((it) => it.name);
+
+    let overwrite = false;
+    if (state.settings.confirmOps || conflicts.length) {
+      let message = `${verb} ${this.plural(items.length, "item")} to ${destDir}?`;
+      if (conflicts.length) message += `\n\n${this.plural(conflicts.length, "item")} already there and will be replaced.`;
+      const ok = await confirmDialog({ title: `${verb} items`, message, confirmLabel: verb, danger: move });
+      if (!ok) return;
+      overwrite = conflicts.length > 0;
+    }
+
+    try {
+      const cmd = move ? "move_entries" : "copy_entries";
+      const res = await invoke<{ done: string[]; skipped: string[] }>(cmd, {
+        items: items.map(({ dir, name }) => ({ dir, name })),
+        dest: destDir,
+        overwrite,
+      });
+      await Promise.all([src.softReload(), dst.softReload()]);
+      const done = res.done.length;
+      toast(
+        res.skipped.length
+          ? `${verb.slice(0, -1)}${move ? "d" : "ied"} ${done}, skipped ${res.skipped.length}`
+          : `${verb.slice(0, -1)}${move ? "d" : "ied"} ${this.plural(done, "item")}`
+      );
+    } catch (e) {
+      toast(String(e));
+    }
+  }
+
+  private async doRename(): Promise<void> {
+    const p = this.activePane();
+    const it = p?.cursorItem();
+    if (!p || !it) return;
+    const newName = await promptDialog({
+      title: "Rename",
+      value: it.name,
+      confirmLabel: "Rename",
+      selectStem: !it.isDir,
+      validate: (v) => {
+        const t = v.trim();
+        if (!t) return "Name can’t be empty";
+        if (t === "." || t === "..") return "That name is reserved";
+        if (t.includes("/")) return "Name can’t contain “/”";
+        if (t !== it.name && p.hasEntry(t)) return `“${t}” already exists`;
+        return null;
+      },
+    });
+    if (newName == null) return;
+    const t = newName.trim();
+    if (t === it.name) return;
+    try {
+      await invoke("rename_entry", { dir: it.dir, name: it.name, newName: t });
+      await p.softReload();
+      p.selectByName(t);
+    } catch (e) {
+      toast(String(e));
+    }
+  }
+
+  private async doNewFolder(): Promise<void> {
+    const p = this.activePane();
+    if (!p) return;
+    const dir = p.currentPath();
+    const name = await promptDialog({
+      title: "New folder",
+      value: "untitled folder",
+      confirmLabel: "Create",
+      validate: (v) => {
+        const t = v.trim();
+        if (!t) return "Name can’t be empty";
+        if (t === "." || t === "..") return "That name is reserved";
+        if (t.includes("/")) return "Name can’t contain “/”";
+        if (p.hasEntry(t)) return `“${t}” already exists`;
+        return null;
+      },
+    });
+    if (name == null) return;
+    const t = name.trim();
+    try {
+      await invoke("create_folder", { dir, name: t });
+      await p.softReload();
+      p.selectByName(t);
+    } catch (e) {
+      toast(String(e));
+    }
+  }
+
+  private async doTrash(): Promise<void> {
+    const p = this.activePane();
+    if (!p) return;
+    const items = p.selectedItems();
+    if (!items.length) return;
+    if (state.settings.confirmOps) {
+      const what = items.length === 1 ? `“${items[0].name}”` : this.plural(items.length, "item");
+      const ok = await confirmDialog({
+        title: "Move to Trash",
+        message: `Move ${what} to the Trash?`,
+        confirmLabel: "Move to Trash",
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    try {
+      await invoke("trash_entries", { items: items.map(({ dir, name }) => ({ dir, name })) });
+      await p.softReload();
+      toast(`Moved ${this.plural(items.length, "item")} to Trash`);
+    } catch (e) {
+      toast(String(e));
+    }
   }
 
   switchPane(): boolean {

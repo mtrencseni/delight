@@ -114,6 +114,30 @@ function resolveLink(node: MNode, depth = 0): MNode | null {
   return t ? resolveLink(t, depth + 1) : null;
 }
 
+/** The `.dir` record of the folder at `path` (mutable), or null. */
+function dirRecord(path: string): Record<string, MNode> | null {
+  const node = lookup(segments(path));
+  const resolved = node ? resolveLink(node) : null;
+  return resolved?.dir ?? null;
+}
+
+function cloneNode(n: MNode): MNode {
+  const c: MNode = { mtime: NOW };
+  if (n.dir) c.dir = Object.fromEntries(Object.entries(n.dir).map(([k, v]) => [k, cloneNode(v)]));
+  else c.size = n.size ?? 0;
+  if (n.link) c.link = n.link;
+  return c;
+}
+
+function dedupName(rec: Record<string, MNode>, name: string): string {
+  const i = name.lastIndexOf(".");
+  const [stem, ext] = i > 0 ? [name.slice(0, i), name.slice(i)] : [name, ""];
+  let c = `${stem} copy${ext}`;
+  let n = 2;
+  while (rec[c]) c = `${stem} copy ${n++}${ext}`;
+  return c;
+}
+
 function splitExt(name: string, isDir: boolean): { stem: string; ext: string | null } {
   if (isDir) return { stem: name, ext: null };
   const i = name.lastIndexOf(".");
@@ -233,6 +257,77 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
       const full = mockText(name, ext);
       const truncated = full.length > maxBytes;
       return { text: truncated ? full.slice(0, maxBytes) : full, truncated, binary: false } as T;
+    }
+
+    case "copy_entries":
+    case "move_entries": {
+      const isMove = cmd === "move_entries";
+      const dest = String(args?.dest ?? "");
+      const destRec = dirRecord(dest);
+      const done: string[] = [];
+      const skipped: string[] = [];
+      if (destRec) {
+        for (const it of (args?.items ?? []) as { dir: string; name: string }[]) {
+          const srcRec = dirRecord(it.dir);
+          if (!srcRec || !srcRec[it.name]) continue;
+          const sameDir = it.dir === dest;
+          let targetName = it.name;
+          if (sameDir) {
+            if (isMove) { skipped.push(it.name); continue; }
+            targetName = dedupName(destRec, it.name);
+          } else if (destRec[it.name] && !args?.overwrite) {
+            skipped.push(it.name);
+            continue;
+          }
+          destRec[targetName] = isMove && !sameDir ? srcRec[it.name] : cloneNode(srcRec[it.name]);
+          if (isMove && !sameDir) delete srcRec[it.name];
+          done.push(it.name);
+        }
+      }
+      return { done, skipped } as T;
+    }
+    case "rename_entry": {
+      const rec = dirRecord(String(args?.dir ?? ""));
+      const name = String(args?.name ?? "");
+      const t = String(args?.newName ?? "").trim();
+      if (!rec || !rec[name]) throw "No longer exists";
+      if (t !== name && rec[t]) throw `“${t}” already exists`;
+      if (t && t !== name) {
+        rec[t] = rec[name];
+        delete rec[name];
+      }
+      return undefined as T;
+    }
+    case "create_folder": {
+      const rec = dirRecord(String(args?.dir ?? ""));
+      const t = String(args?.name ?? "").trim();
+      if (!rec) throw "No such folder";
+      if (rec[t]) throw `“${t}” already exists`;
+      rec[t] = d({}, 0);
+      return undefined as T;
+    }
+    case "trash_entries": {
+      for (const it of (args?.items ?? []) as { dir: string; name: string }[]) {
+        const rec = dirRecord(it.dir);
+        if (rec) delete rec[it.name];
+      }
+      return undefined as T;
+    }
+
+    case "dir_signature": {
+      const rec = dirRecord(String(args?.path ?? ""));
+      if (!rec) return null as T;
+      let acc = 0;
+      let count = 0;
+      for (const [name, node] of Object.entries(rec)) {
+        count++;
+        let h = 0;
+        for (const c of name) h = (h * 131 + c.charCodeAt(0)) >>> 0;
+        h = (h ^ (node.size ?? 0)) >>> 0;
+        h = (h ^ (node.mtime & 0xffffffff)) >>> 0;
+        acc = (acc + h) >>> 0;
+      }
+      return ((acc + count * 2654435761) >>> 0) as T;
     }
 
     case "fs_roots":
