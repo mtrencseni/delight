@@ -339,6 +339,14 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
       ] as T;
     case "dropbox_dir":
       return (HOME + "/Dropbox") as T;
+    case "disk_space":
+      // Fake a 512 GB volume with 137 GB free for the drive-usage readouts.
+      return { total: 512 * 1e9, free: 137 * 1e9 } as T;
+    case "dir_size": {
+      // Fake a deterministic non-zero size so the Space-on-folder flow is testable.
+      const p = String(args?.path ?? "");
+      return (98_765_432 + p.length * 1_000_000) as T;
+    }
     case "load_state": {
       const raw = localStorage.getItem("delight-state");
       return (raw ? JSON.parse(raw) : null) as T;

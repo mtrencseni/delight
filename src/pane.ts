@@ -1,7 +1,7 @@
 import { assetUrl, invoke, isTauri } from "./ipc";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import type { ChildEntry, ColKey, ColWidths, Details, Entry, Listing, Location, PaneState, SortDir, SortKey, ViewMode } from "./types";
-import { baseName, clamp, fmtDate, humanSize, isDriveRoot, recency } from "./format";
+import { baseName, clamp, displaySep, driveLetter, fmtDate, humanSize, isDriveRoot, recency, toSystemSep, withSep } from "./format";
 import { driveGlyph, fileIcon, icons } from "./icons";
 import { CodePreview, langForTextFile } from "./codepreview";
 import type { LangId } from "./langs";
@@ -97,6 +97,7 @@ export class PaneView {
   readonly el: HTMLElement;
   private host: PaneHost;
   private pathInput: HTMLInputElement;
+  private diskEl: HTMLElement;
   private errBox: HTMLElement;
   private header: HTMLElement;
   private scroller: HTMLElement;
@@ -133,6 +134,9 @@ export class PaneView {
   /** Chips view: debounce detail/thumbnail fetches + track the active item. */
   private chipTimer = 0;
   private chipKey = "";
+  /** Reused read-only editor for the expanded chip's text-file preview (the same
+      render as the Space preview, but non-interactive via CSS). */
+  private cardPreview: CodePreview | null = null;
   /** Opposite-pane preview: debounce the thumbnail fetch + track the shown item. */
   private previewTimer = 0;
   private previewKey = "";
@@ -184,7 +188,12 @@ export class PaneView {
       this.toggleLocations();
     });
 
-    bar.append(this.pathInput, this.viewSeg, this.locBtn);
+    this.diskEl = div("diskinfo hidden");
+    // A spacer that only grows at a drive root, so the disk readout hugs the short
+    // "D:\" path (instead of being pushed to the far right) while the view buttons
+    // stay pinned right.
+    const pathgap = div("pathgap");
+    bar.append(this.pathInput, this.diskEl, pathgap, this.viewSeg, this.locBtn);
 
     this.errBox = div("pane-error hidden");
 
@@ -246,7 +255,7 @@ export class PaneView {
 
     this.pathInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
-        const v = this.pathInput.value.trim();
+        const v = toSystemSep(this.pathInput.value.trim(), state.settings.pathSep);
         if (v) this.navigate(v).then((ok) => ok && this.pathInput.blur());
       } else if (e.key === "Escape") {
         this.resetPathInput();
@@ -592,8 +601,48 @@ export class PaneView {
   }
 
   private resetPathInput(): void {
-    this.pathInput.value = this.st.path;
+    this.pathInput.value = withSep(this.st.path, state.settings.pathSep);
     this.hideError();
+  }
+
+  /** Re-render just the path-bar text (after the path-separator setting changes). */
+  refreshPathBar(): void {
+    if (document.activeElement !== this.pathInput) {
+      this.pathInput.value = withSep(this.st.path, state.settings.pathSep);
+    }
+  }
+
+  /** When the current folder is a drive root, show total/used/free next to the
+      path bar; otherwise hide it. Fetched lazily and ignored if we navigate away. */
+  private updateDiskInfo(): void {
+    const path = this.st.path;
+    const bar = this.pathInput.parentElement;
+    const clear = () => {
+      this.diskEl.classList.add("hidden");
+      this.diskEl.textContent = "";
+      bar?.classList.remove("at-root");
+      this.pathInput.removeAttribute("size");
+    };
+    if (!isDriveRoot(path)) {
+      clear();
+      return;
+    }
+    void invoke<{ total: number; free: number } | null>("disk_space", { path })
+      .then((d) => {
+        if (this.st.path !== path) return; // navigated away before it resolved
+        if (!d || !d.total) {
+          clear();
+          return;
+        }
+        const used = d.total - d.free;
+        this.diskEl.textContent = `${humanSize(d.total)} · ${humanSize(used)} used · ${humanSize(d.free)} free`;
+        this.diskEl.classList.remove("hidden");
+        // Shrink the path input to the short root path so the readout sits just
+        // after it; the .pathgap spacer keeps the view buttons pinned right.
+        bar?.classList.add("at-root");
+        this.pathInput.size = Math.max(this.pathInput.value.length, 4);
+      })
+      .catch(() => {});
   }
 
   private showError(msg: string): void {
@@ -614,7 +663,8 @@ export class PaneView {
       this.st.cursor = 0;
       recordVisit(l.path); // remember this folder for the "recent folders" highlight
       this.expandState.clear(); // disclosure state belongs to the old root
-      this.pathInput.value = l.path;
+      this.pathInput.value = withSep(l.path, state.settings.pathSep);
+      this.updateDiskInfo();
       this.hideError();
       this.rebuild();
       this.scroller.scrollTop = 0;
@@ -670,6 +720,33 @@ export class PaneView {
       so the stale indices it emits while opening don't jump the cursor. */
   private previewArmed = false;
   private previewExpected = -1;
+
+  /** Space on a folder: recursively compute its size and show it in the Size
+      column (replacing "<DIR>"). Returns true when the cursor is a folder (so the
+      caller suppresses the file preview); false for files and "..". */
+  sizeCursorDir(): boolean {
+    const cur = this.view[this.st.cursor];
+    if (!cur || cur.entry === UP_ENTRY || !cur.entry.isDir) return false;
+    const en = cur.entry;
+    if (en.sizeComputing) return true;
+    const dir = cur.dirPath;
+    const sep = dir.includes("\\") ? "\\" : "/";
+    const full = dir.replace(/[\\/]+$/, "") + sep + en.name;
+    en.sizeComputing = true;
+    this.renderRows(); // show "…" while the walk runs
+    void invoke<number>("dir_size", { path: full })
+      .then((bytes) => {
+        en.size = bytes;
+        en.sizeComputing = false;
+        en.sizeComputed = true;
+        this.renderRows();
+      })
+      .catch(() => {
+        en.sizeComputing = false;
+        this.renderRows();
+      });
+    return true;
+  }
 
   /** Space: open Quick Look on the cursor item. The panel navigates the whole
       directory; applyPreviewIndex() keeps our cursor in sync as it moves. */
@@ -1329,7 +1406,16 @@ export class PaneView {
     const size = div("cell col-size sizecell");
     const sv = document.createElement("span");
     sv.className = "cellval";
-    sv.textContent = en === UP_ENTRY ? "" : en.isDir ? "<DIR>" : humanSize(en.size);
+    sv.textContent =
+      en === UP_ENTRY
+        ? ""
+        : en.isDir
+          ? en.sizeComputing
+            ? "…"
+            : en.sizeComputed
+              ? humanSize(en.size)
+              : "<DIR>"
+          : humanSize(en.size);
     this.appendSizeBar(size, en);
     size.append(sv);
     const mod = div("cell col-mod" + this.recencyClass(en));
@@ -1475,9 +1561,16 @@ export class PaneView {
     this.chipKey = `${dirPath} ${en.name}`;
     this.fillName(title, en, this.disp(en.name));
 
-    const ic = div("ficon");
-    this.iconInto(ic, en, dirPath);
-    thumb.append(ic);
+    // Text file → the same syntax-highlighted preview as the Space preview (but
+    // non-interactive); everything else keeps the thumbnail/icon.
+    const lang = en.isDir ? null : langForTextFile(en.name);
+    if (lang) {
+      this.fillChipCode(thumb, en, dirPath, lang, this.chipKey);
+    } else {
+      const ic = div("ficon");
+      this.iconInto(ic, en, dirPath);
+      thumb.append(ic);
+    }
 
     const kind = document.createElement("span");
     kind.textContent = en.isDir ? "Folder" : this.kindLabel(en.ext);
@@ -1535,11 +1628,41 @@ export class PaneView {
     return chip;
   }
 
+  /** Render the expanded chip's text preview: the same read-only CodeMirror view
+      as the Space preview, reused across chips and made non-interactive by CSS
+      (pointer-events: none) — it's never focused. Binary content falls back to the
+      icon. */
+  private fillChipCode(thumb: HTMLElement, en: Entry, dirPath: string, lang: LangId, key: string): void {
+    const host = div("chcode edhost cmprev");
+    if (!this.cardPreview) this.cardPreview = new CodePreview(host);
+    else host.append(this.cardPreview.dom);
+    this.cardPreview.setDoc("", lang);
+    thumb.append(host);
+    void invoke<{ text: string; truncated: boolean; binary: boolean }>("read_text_file", {
+      dir: dirPath,
+      name: en.name,
+      maxBytes: state.settings.codePreviewBytes,
+    })
+      .then((res) => {
+        if (this.chipKey !== key || !this.cardPreview) return; // cursor moved on
+        if (res.binary) {
+          const ic = div("ficon");
+          this.iconInto(ic, en, dirPath);
+          thumb.replaceChildren(ic);
+          return;
+        }
+        this.cardPreview.setDoc(res.text, lang);
+      })
+      .catch(() => {});
+  }
+
   private scheduleChipData(key: string, dirPath: string, en: Entry): void {
     clearTimeout(this.chipTimer);
+    // Text files render a live code preview (fillChipCode), not a thumbnail.
+    const isText = !en.isDir && langForTextFile(en.name) !== null;
     const haveDetails = cachedDetails(dirPath, en.name) !== undefined;
     const haveThumb =
-      en.isDir || cachedThumbnail(dirPath, en.name, state.settings.previewSize) !== undefined;
+      en.isDir || isText || cachedThumbnail(dirPath, en.name, state.settings.previewSize) !== undefined;
     if (haveDetails && haveThumb) return; // already applied synchronously
     this.chipTimer = window.setTimeout(() => {
       if (this.chipKey !== key) return; // moved on before the debounce fired
@@ -1548,7 +1671,7 @@ export class PaneView {
         const chip = this.rowLayer.querySelector<HTMLElement>(".chip");
         if (chip) this.applyChipDetails(chip, en, dirPath, d);
       });
-      if (!en.isDir) {
+      if (!en.isDir && !isText) {
         void fetchThumbnail(dirPath, en.name, state.settings.previewSize).then((uri) => {
           if (this.chipKey !== key || !uri) return;
           const chip = this.rowLayer.querySelector<HTMLElement>(".chip");
@@ -2301,9 +2424,7 @@ export class PaneView {
       grip.addEventListener("click", (e) => e.stopPropagation());
       grip.addEventListener("mousedown", (e) => this.startFavDrag(e, item, index));
       const ic = div("ficon locicon");
-      if (isDriveRoot(loc.path)) {
-        ic.innerHTML = driveGlyph((loc.name.match(/[A-Za-z0-9]/)?.[0] ?? "?").toUpperCase());
-      } else if (sys) {
+      if (sys) {
         const c = cachedIconForPath(loc.path);
         if (c) this.setSysImg(ic, c);
         else {
@@ -2315,9 +2436,13 @@ export class PaneView {
       } else {
         ic.innerHTML = icons.folder;
       }
+      // Badge the folder with its drive letter (Windows): `d:\xyz\abc` → "abc"
+      // with a "D" on the icon; a drive root `c:\` → "\" with a "C" on the icon.
+      const dl = driveLetter(loc.path);
+      if (dl) ic.dataset.drive = dl;
       const label = document.createElement("span");
       label.className = "locname";
-      label.textContent = loc.name;
+      label.textContent = isDriveRoot(loc.path) ? displaySep(state.settings.pathSep) : loc.name;
       label.title = loc.path;
       const rm = document.createElement("button");
       rm.className = "locrm";

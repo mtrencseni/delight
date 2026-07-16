@@ -27,6 +27,8 @@ trash = "5"
 # canonicalize without the Windows \\?\ verbatim prefix (no-op elsewhere), so the
 # path bar shows C:\Users\… not \\?\C:\Users\…. Only simplifies when it's safe.
 dunce = "1"
+# Cross-platform total/free disk space for a path (drive-root disk usage readout).
+fs2 = "0.4"
 
 # Owner name resolution (uid -> username) on Unix.
 [target.'cfg(unix)'.dependencies]

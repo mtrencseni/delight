@@ -38,6 +38,8 @@ pub fn run() {
             fs_cmds::dir_mtime,
             fs_cmds::dir_signature,
             fs_cmds::read_text_file,
+            fs_cmds::disk_space,
+            fs_cmds::dir_size,
             ops::copy_entries,
             ops::move_entries,
             ops::rename_entry,

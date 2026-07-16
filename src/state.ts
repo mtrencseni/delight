@@ -37,6 +37,7 @@ export const state = {
     showCreated: false,
     showPermissions: false,
     nameCase: "original",
+    pathSep: "system",
     foldersOnTop: true,
     visitedCacheSize: 100,
     linkedSort: true,

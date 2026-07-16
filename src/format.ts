@@ -1,3 +1,5 @@
+import { isMac } from "./platform";
+
 export function humanSize(n: number): string {
   if (n < 1024) return `${n} B`;
   const units = ["KB", "MB", "GB", "TB"];
@@ -75,4 +77,33 @@ export function baseName(path: string): string {
 /** True for a bare drive root like `C:\`, `D:/`, or `C:` (Windows). */
 export function isDriveRoot(path: string): boolean {
   return /^[A-Za-z]:[\\/]?$/.test(path);
+}
+
+/** The uppercase drive letter of a Windows path (`d:\xyz\abc` → `D`), or null
+ *  when there isn't one (Unix paths, UNC shares). Used to badge favorite icons. */
+export function driveLetter(path: string): string | null {
+  const m = /^([A-Za-z]):/.exec(path);
+  return m ? m[1].toUpperCase() : null;
+}
+
+export type PathSep = "system" | "/" | "\\";
+
+/** Rewrite a path's separators for *display* only (path bar + tab titles):
+ *  "system" leaves the OS-native separator, "/" forces forward, "\" forces back. */
+export function withSep(path: string, mode: PathSep): string {
+  if (mode === "/") return path.replace(/\\/g, "/");
+  if (mode === "\\") return path.replace(/\//g, "\\");
+  return path;
+}
+
+/** Undo the display transform so a typed path is navigable. Windows accepts both
+ *  separators, so only forced-backslash needs reversing (for macOS/Linux). */
+export function toSystemSep(path: string, mode: PathSep): string {
+  return mode === "\\" ? path.replace(/\\/g, "/") : path;
+}
+
+/** The lone separator glyph to display for a bare drive root, honoring the
+ *  path-separator setting ("system" = the OS-native slash). */
+export function displaySep(mode: PathSep): string {
+  return mode === "system" ? (isMac ? "/" : "\\") : mode;
 }

@@ -1,6 +1,8 @@
 import type { Location } from "./types";
-import { driveGlyph, icons } from "./icons";
-import { baseName, isDriveRoot } from "./format";
+import { icons } from "./icons";
+import { baseName, displaySep, driveLetter, humanSize, isDriveRoot } from "./format";
+import { state } from "./state";
+import { invoke } from "./ipc";
 import { cachedIconForPath, fetchIconForPath } from "./sysicons";
 
 /** The single-pane mode's fixed left sidebar: the Favorites list, navigating the
@@ -47,9 +49,7 @@ export class FavSidebar {
       grip.addEventListener("mousedown", (e) => this.startDrag(e, item, index));
 
       const ic = el("ficon locicon");
-      if (isDriveRoot(loc.path)) {
-        ic.innerHTML = driveGlyph((loc.name.match(/[A-Za-z0-9]/)?.[0] ?? "?").toUpperCase());
-      } else if (sys) {
+      if (sys) {
         const c = cachedIconForPath(loc.path);
         if (c) this.setImg(ic, c);
         else {
@@ -59,11 +59,29 @@ export class FavSidebar {
       } else {
         ic.innerHTML = icons.folder;
       }
+      // Badge the folder with its drive letter (Windows): `d:\xyz\abc` → "abc"
+      // with a "D"; a drive root `c:\` → "\" with a "C" on the icon.
+      const dl = driveLetter(loc.path);
+      if (dl) ic.dataset.drive = dl;
 
       const label = document.createElement("span");
       label.className = "locname";
-      label.textContent = loc.name;
+      const root = isDriveRoot(loc.path);
+      label.textContent = root ? displaySep(state.settings.pathSep) : loc.name;
       label.title = loc.path;
+      // For a drive root, show its free space beside the separator — smaller + gray.
+      if (root) {
+        void invoke<{ total: number; free: number } | null>("disk_space", { path: loc.path })
+          .then((d) => {
+            if (!d || !label.isConnected) return;
+            label.textContent = displaySep(state.settings.pathSep);
+            const free = document.createElement("span");
+            free.className = "locfree";
+            free.textContent = `(${humanSize(d.free)} free)`;
+            label.append(free);
+          })
+          .catch(() => {});
+      }
 
       const rm = document.createElement("button");
       rm.className = "locrm";

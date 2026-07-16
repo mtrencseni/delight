@@ -25,6 +25,7 @@ export interface SettingsHooks {
   onShowCreated(v: boolean): void;
   onShowPermissions(v: boolean): void;
   onNameCase(c: "original" | "lower" | "upper"): void;
+  onPathSep(s: "system" | "/" | "\\"): void;
   onFoldersOnTop(v: boolean): void;
   onVisitedCacheSize(n: number): void;
   onClearVisited(): void;
@@ -165,6 +166,23 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     caseBtns.set(val, b);
     caseSeg.append(b);
   }
+
+  // Path-separator segmented control (system / forward / back).
+  const sepSeg = el("div", "seg");
+  const sepBtns = new Map<"system" | "/" | "\\", HTMLButtonElement>();
+  for (const [val, label] of [
+    ["system", "System"],
+    ["/", "/"],
+    ["\\", "\\"],
+  ] as ["system" | "/" | "\\", string][]) {
+    const b = el("button", "", label);
+    b.addEventListener("click", () => {
+      hooks.onPathSep(val);
+      sync();
+    });
+    sepBtns.set(val, b);
+    sepSeg.append(b);
+  }
   const chipCardsSw = makeSwitch(() => hooks.get().chipCards, hooks.onChipCards);
   const bigChipsSw = makeSwitch(() => hooks.get().bigChips, hooks.onBigChips);
   const folderChipsSw = makeSwitch(() => hooks.get().folderChips, hooks.onFolderChips);
@@ -224,7 +242,8 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     row("Logarithmic size bars", "Log scale with decade gridlines (10 KB, 100 KB, …)", sizeBarLogSw),
     row("Created column", "Show a Created-time column in list view", createdColSw),
     row("Permissions column", "Show a Permissions column in list view", permsColSw),
-    row("Item case", "Display all names and extensions in this case", caseSeg)
+    row("Item case", "Display all names and extensions in this case", caseSeg),
+    row("Path separator", "Slashes in the path bar and tab titles — the OS default, or force / or \\", sepSeg)
   );
 
   section(
@@ -289,6 +308,7 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     setSwitch(linkedSortSw, s.linkedSort);
     setSwitch(confirmOpsSw, s.confirmOps);
     for (const [val, b] of caseBtns) b.classList.toggle("on", s.nameCase === val);
+    for (const [val, b] of sepBtns) b.classList.toggle("on", s.pathSep === val);
     setSwitch(devToolsSw, s.devTools);
     val.textContent = `${s.defaultZoom}%`;
   }

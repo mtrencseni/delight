@@ -9,6 +9,10 @@ export interface Entry {
   createdMs: number | null;
   permissions: string | null;
   hidden: boolean;
+  /** Frontend-only: a folder's recursively-computed size (Space on a folder).
+      `sizeComputing` while the walk runs, `sizeComputed` once `size` is filled. */
+  sizeComputing?: boolean;
+  sizeComputed?: boolean;
 }
 
 export interface Listing {
@@ -122,6 +126,9 @@ export interface Settings {
   showPermissions: boolean;
   /** Case transform applied to all displayed names/extensions. */
   nameCase: "original" | "lower" | "upper";
+  /** Slash style shown in the path bar and tab titles: the OS native separator,
+      always forward, or always back. Display-only — real paths are unaffected. */
+  pathSep: "system" | "/" | "\\";
   /** Group folders above files (Norton Commander) vs sorting them inline with
       files by the active column (Finder). */
   foldersOnTop: boolean;

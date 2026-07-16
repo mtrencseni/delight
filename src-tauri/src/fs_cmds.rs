@@ -298,6 +298,60 @@ pub async fn read_text_file(dir: String, name: String, max_bytes: usize) -> Resu
     .map_err(|e| e.to_string())?
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiskSpace {
+    total: u64,
+    free: u64,
+}
+
+/// Total + free bytes on the volume that holds `path`. Used to show disk usage in
+/// the path bar at a drive root and beside a drive-root favorite. None if the
+/// path can't be queried.
+#[tauri::command]
+pub async fn disk_space(path: String) -> Option<DiskSpace> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = Path::new(&path);
+        Some(DiskSpace {
+            total: fs2::total_space(p).ok()?,
+            // "available" = free to *this* user (respects quotas); the right number
+            // to show as "free". free_space() can be larger on quota'd volumes.
+            free: fs2::available_space(p).ok()?,
+        })
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// Recursively sum the sizes of every regular file under `dir` (Space on a folder
+/// → its total size in the Size column). Symlinks are not followed, so cycles
+/// can't trap the walk. Runs off the UI thread; can be slow for large trees.
+#[tauri::command]
+pub async fn dir_size(path: String) -> u64 {
+    tauri::async_runtime::spawn_blocking(move || walk_size(Path::new(&path)))
+        .await
+        .unwrap_or(0)
+}
+
+fn walk_size(dir: &Path) -> u64 {
+    let mut total = 0u64;
+    let Ok(rd) = fs::read_dir(dir) else {
+        return 0;
+    };
+    for de in rd.flatten() {
+        // DirEntry::metadata does NOT follow symlinks, so a symlinked dir reports
+        // as neither file nor dir here and is skipped — no cycles, no double count.
+        let Ok(meta) = de.metadata() else { continue };
+        if meta.is_dir() {
+            total = total.saturating_add(walk_size(&de.path()));
+        } else if meta.is_file() {
+            total = total.saturating_add(meta.len());
+        }
+    }
+    total
+}
+
 #[cfg(all(test, windows))]
 mod hidden_tests {
     use super::is_hidden;

@@ -13,7 +13,7 @@ import { confirmDialog, promptDialog } from "./dialog";
 import { icons } from "./icons";
 import { buildSettingsPage, type SettingsPage } from "./settingsPage";
 import { buildKeybindingsPage, type KeybindingsPage } from "./keybindingsPage";
-import { baseName, clamp } from "./format";
+import { baseName, clamp, withSep } from "./format";
 
 interface TabView {
   el: HTMLElement;
@@ -248,6 +248,7 @@ class App {
       if (typeof s.showCreated === "boolean") state.settings.showCreated = s.showCreated;
       if (typeof s.showPermissions === "boolean") state.settings.showPermissions = s.showPermissions;
       if (["original", "lower", "upper"].includes(s.nameCase)) state.settings.nameCase = s.nameCase;
+      if (["system", "/", "\\"].includes(s.pathSep)) state.settings.pathSep = s.pathSep;
       if (typeof s.foldersOnTop === "boolean") state.settings.foldersOnTop = s.foldersOnTop;
       if (VISITED_SIZES.includes(s.visitedCacheSize)) state.settings.visitedCacheSize = s.visitedCacheSize;
       if (typeof s.linkedSort === "boolean") state.settings.linkedSort = s.linkedSort;
@@ -549,6 +550,13 @@ class App {
         for (const view of this.views.values()) view.panes?.forEach((p) => p.renderRows());
         persist();
       },
+      onPathSep: (sep) => {
+        state.settings.pathSep = sep;
+        for (const view of this.views.values()) view.panes?.forEach((p) => p.refreshPathBar());
+        this.renderTabstrip();
+        this.refreshSidebars(); // drive-root "\" / "/" in the left-pane favorites
+        persist();
+      },
       onFoldersOnTop: (v) => {
         state.settings.foldersOnTop = v;
         for (const view of this.views.values()) view.panes?.forEach((p) => p.refreshView());
@@ -720,7 +728,12 @@ class App {
     if (tab.kind === "settings") return "Settings";
     if (tab.kind === "keybindings") return "Shortcuts";
     const name = (p: PaneState) => p.listing?.name || p.path || "—";
-    const title = `${name(tab.panes![0])} - ${name(tab.panes![1])}`;
+    // Single-pane mode browses one pane (pane 0; pane 1 is only the preview), so
+    // the tab shows just that dir — not the "left - right" pair.
+    const raw = tab.single
+      ? name(tab.panes![0])
+      : `${name(tab.panes![0])} - ${name(tab.panes![1])}`;
+    const title = withSep(raw, state.settings.pathSep);
     return state.settings.lowercaseTabs ? title.toLowerCase() : title;
   }
 
@@ -1097,6 +1110,7 @@ class App {
     tab.single = !tab.single;
     this.applySingle(tab);
     this.syncSingleBtn();
+    this.renderTabstrip(); // title switches between "one" and "left - right"
     persist();
   }
 
@@ -1141,6 +1155,8 @@ class App {
   private doPreview(): void {
     const p = this.activePane();
     if (!p) return;
+    // Space on a folder → compute + show its size only (no file preview).
+    if (p.sizeCursorDir()) return;
     if (state.settings.previewPane) {
       this.togglePanePreview(p);
     } else {
