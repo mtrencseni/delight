@@ -31,6 +31,7 @@ export interface SettingsHooks {
   onClearVisited(): void;
   onLinkedSort(v: boolean): void;
   onConfirmOps(v: boolean): void;
+  onEditorPath(v: string): void;
   onOpenKeybindings(): void;
   onDevTools(v: boolean): void;
 }
@@ -183,6 +184,13 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     sepBtns.set(val, b);
     sepSeg.append(b);
   }
+
+  // External editor (F4) path — a plain text field.
+  const editorInput = el("input", "textinput");
+  editorInput.type = "text";
+  editorInput.spellcheck = false;
+  editorInput.placeholder = "Path to the Buffers executable";
+  editorInput.addEventListener("change", () => hooks.onEditorPath(editorInput.value.trim()));
   const chipCardsSw = makeSwitch(() => hooks.get().chipCards, hooks.onChipCards);
   const bigChipsSw = makeSwitch(() => hooks.get().bigChips, hooks.onBigChips);
   const folderChipsSw = makeSwitch(() => hooks.get().folderChips, hooks.onFolderChips);
@@ -275,6 +283,7 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
 
   section(
     "Advanced",
+    row("Editor (F4)", "Path to the Buffers executable that F4 opens the selected file in", editorInput),
     row("Enable developer tools", `Toggle the Web Inspector with ${hint("devtools")}`, devToolsSw)
   );
 
@@ -309,6 +318,7 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     setSwitch(confirmOpsSw, s.confirmOps);
     for (const [val, b] of caseBtns) b.classList.toggle("on", s.nameCase === val);
     for (const [val, b] of sepBtns) b.classList.toggle("on", s.pathSep === val);
+    if (document.activeElement !== editorInput) editorInput.value = s.editorPath;
     setSwitch(devToolsSw, s.devTools);
     val.textContent = `${s.defaultZoom}%`;
   }

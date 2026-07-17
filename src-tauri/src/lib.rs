@@ -49,6 +49,7 @@ pub fn run() {
             details::item_details,
             details::file_thumbnail,
             actions::open_path,
+            actions::open_in_editor,
             actions::quicklook,
             actions::quicklook_close,
             actions::toggle_devtools,

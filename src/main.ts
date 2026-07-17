@@ -174,11 +174,13 @@ class App {
       cursorEnd: () => this.activePane()?.moveEnd(),
       open: () => this.activePane()?.openCursor(),
       up: () => this.activePane()?.goUp(),
+      editFile: () => void this.doEdit(),
       copyToOther: () => void this.doTransfer(false),
       moveToOther: () => void this.doTransfer(true),
       rename: () => void this.doRename(),
       newFolder: () => void this.doNewFolder(),
       trash: () => void this.doTrash(),
+      toggleMark: () => this.activePane()?.markCursorAndAdvance(),
       selectUp: () => this.activePane()?.extendCursor(-1),
       selectDown: () => this.activePane()?.extendCursor(1),
       selectAll: () => this.activePane()?.selectAll(),
@@ -253,6 +255,7 @@ class App {
       if (VISITED_SIZES.includes(s.visitedCacheSize)) state.settings.visitedCacheSize = s.visitedCacheSize;
       if (typeof s.linkedSort === "boolean") state.settings.linkedSort = s.linkedSort;
       if (typeof s.confirmOps === "boolean") state.settings.confirmOps = s.confirmOps;
+      if (typeof s.editorPath === "string") state.settings.editorPath = s.editorPath;
       if (typeof s.devTools === "boolean") state.settings.devTools = s.devTools;
     }
     state.zoom = ZOOM_LEVELS.includes(saved?.zoom) ? saved.zoom : state.settings.defaultZoom;
@@ -591,6 +594,10 @@ class App {
       },
       onConfirmOps: (v) => {
         state.settings.confirmOps = v;
+        persist();
+      },
+      onEditorPath: (v) => {
+        state.settings.editorPath = v;
         persist();
       },
       onDevTools: (v) => {
@@ -944,6 +951,26 @@ class App {
           ? `${verb.slice(0, -1)}${move ? "d" : "ied"} ${done}, skipped ${res.skipped.length}`
           : `${verb.slice(0, -1)}${move ? "d" : "ied"} ${this.plural(done, "item")}`
       );
+    } catch (e) {
+      toast(String(e));
+    }
+  }
+
+  /** F4: open the cursor file in the external editor (Buffers). */
+  private async doEdit(): Promise<void> {
+    const it = this.activePane()?.cursorItem();
+    if (!it) return;
+    if (it.isDir) {
+      toast("Can’t edit a folder");
+      return;
+    }
+    const exe = state.settings.editorPath.trim();
+    if (!exe) {
+      toast("Set the editor path in Settings first");
+      return;
+    }
+    try {
+      await invoke("open_in_editor", { exe, path: this.childPath(it.dir, it.name) });
     } catch (e) {
       toast(String(e));
     }

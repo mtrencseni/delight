@@ -25,11 +25,13 @@ export type CommandId =
   | "cursorEnd"
   | "open"
   | "up"
+  | "editFile"
   | "copyToOther"
   | "moveToOther"
   | "rename"
   | "newFolder"
   | "trash"
+  | "toggleMark"
   | "selectUp"
   | "selectDown"
   | "selectAll"
@@ -91,8 +93,9 @@ export const COMMANDS: Command[] = [
   { id: "up", label: "Go up a folder", group: "Panes & navigation", defaults: ["Backspace"] },
 
   // File operations. Windows/Linux use the classic Norton Commander / Total
-  // Commander F-keys (F5 copy … F8 delete); macOS uses the number row instead,
+  // Commander F-keys (F4 edit … F8 delete); macOS uses the number row instead,
   // since the F-keys there need the Fn modifier to fire as a single press.
+  { id: "editFile", label: "Edit (open in Buffers)", group: "File operations", defaults: isMac ? ["Digit4"] : ["F4"] },
   { id: "copyToOther", label: "Copy to other pane", group: "File operations", defaults: isMac ? ["Digit5"] : ["F5"] },
   { id: "moveToOther", label: "Move to other pane", group: "File operations", defaults: isMac ? ["Digit6"] : ["F6"] },
   { id: "rename", label: "Rename", group: "File operations", defaults: isMac ? ["Shift+Digit6"] : ["Shift+F6"] },
@@ -100,6 +103,9 @@ export const COMMANDS: Command[] = [
   { id: "trash", label: "Move to Trash", group: "File operations", defaults: isMac ? ["Digit8"] : ["F8"] },
 
   // Selection
+  // Insert marks the current item and steps down (Total Commander). On Mac
+  // laptops without an Insert key, rebind it in the Shortcuts tab.
+  { id: "toggleMark", label: "Select / deselect item", group: "Selection", defaults: ["Insert"] },
   { id: "selectUp", label: "Extend selection up", group: "Selection", defaults: ["Shift+ArrowUp"] },
   { id: "selectDown", label: "Extend selection down", group: "Selection", defaults: ["Shift+ArrowDown"] },
   { id: "selectAll", label: "Select all", group: "Selection", defaults: [`${MOD}+KeyA`] },

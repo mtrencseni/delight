@@ -1000,9 +1000,6 @@ export class PaneView {
     });
     const aj = anchorKey != null ? this.view.findIndex((r) => r.key === anchorKey) : -1;
     this.anchor = aj >= 0 ? aj : this.st.cursor;
-    if (this.selection.size === 0 && this.isSelectable(this.st.cursor)) {
-      this.selection.add(this.st.cursor);
-    }
 
     this.updateSortMarks();
     this.renderRows();
@@ -1802,8 +1799,32 @@ export class PaneView {
   // ---- cursor & selection ----------------------------------------------------
 
   /** Move the cursor to `i`, collapsing the selection to just that row. */
+  /** Move the cursor to `i`, keeping the marked set intact — the default for
+      arrow keys, Home/End/Page, expand/collapse, etc. The cursor is shown
+      separately from the marks (highlight + ring, see selClass). */
   setCursor(i: number, ensure = true): void {
-    this.selectSingle(i, ensure);
+    this.moveCursorTo(i, ensure);
+  }
+
+  private moveCursorTo(i: number, ensure = true): void {
+    const c = this.clampIndex(i);
+    this.st.cursor = c;
+    this.anchor = c;
+    this.commitCursor(ensure);
+  }
+
+  /** Insert (Total Commander): toggle the cursor item's mark, then step to the
+      next item. Marks persist as the cursor moves, so you can build up a multi-
+      selection; Copy/Move/Delete then act on all marked items. */
+  markCursorAndAdvance(): void {
+    this.markKbNav();
+    const i = this.st.cursor;
+    if (this.isSelectable(i)) {
+      if (this.selection.has(i)) this.selection.delete(i);
+      else this.selection.add(i);
+    }
+    const step = this.isGrid() ? this.gridCols() : 1;
+    this.moveCursorTo(this.st.cursor + step);
   }
 
   private clampIndex(i: number): number {
@@ -1819,18 +1840,24 @@ export class PaneView {
   /** Highlight class for a row: the real selection, plus the cursor when it
       rests on ".." — which is never in the selection set but should still show
       as focused (arrow-to-it / click-it). */
+  /** Row highlight: the cursor gets the filled `is-selected` background (browsing
+      looks unchanged); marked items get a red `is-marked` treatment so the marked
+      set is obvious and distinct from the cursor moving through it. */
   private selClass(i: number): string {
-    if (this.selection.has(i)) return " is-selected";
-    if (i === this.st.cursor && this.view[i]?.entry === UP_ENTRY) return " is-selected";
-    return "";
+    const cursor = i === this.st.cursor;
+    const marked = this.isSelectable(i) && this.selection.has(i);
+    let cls = "";
+    if (cursor) cls += " is-selected";
+    if (marked) cls += " is-marked";
+    return cls;
   }
 
+  /** Plain click / fresh single: drop all marks and put the cursor here.
+      Operations fall back to the cursor when nothing is marked, so single-file
+      actions still work without an explicit selection. */
   private selectSingle(i: number, ensure = true): void {
-    const c = this.clampIndex(i);
-    this.st.cursor = c;
-    this.anchor = c;
-    this.selection = this.isSelectable(c) ? new Set([c]) : new Set();
-    this.commitCursor(ensure);
+    this.selection = new Set();
+    this.moveCursorTo(i, ensure);
   }
 
   /** ⌘/⌃-click: toggle one row; it becomes the cursor and range anchor. */
@@ -1886,10 +1913,12 @@ export class PaneView {
     this.host.cursorMoved();
   }
 
-  /** The selected real entries (skips ".."), for drag-out and future ops. */
+  /** The marked real entries (skips ".."), or the cursor item when nothing is
+      marked — for drag-out and file ops. */
   selectedEntries(): { dir: string; name: string; isDir: boolean }[] {
+    const idxs = this.selection.size ? [...this.selection].sort((a, b) => a - b) : [this.st.cursor];
     const out: { dir: string; name: string; isDir: boolean }[] = [];
-    for (const i of [...this.selection].sort((a, b) => a - b)) {
+    for (const i of idxs) {
       const r = this.view[i];
       if (r && r.entry !== UP_ENTRY) out.push({ dir: r.dirPath, name: r.entry.name, isDir: r.entry.isDir });
     }

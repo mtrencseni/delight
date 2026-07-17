@@ -1,6 +1,7 @@
 import { invoke } from "./ipc";
 import { COL_KEYS, type ColKey, type Location, type Settings, type Tab, type Visited } from "./types";
 import { COMMANDS, comboLabel, type CommandId } from "./commands";
+import { isMac } from "./platform";
 
 export const ZOOM_LEVELS = [50, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200];
 export const PREVIEW_SIZES = [512, 1024, 2048];
@@ -42,6 +43,9 @@ export const state = {
     visitedCacheSize: 100,
     linkedSort: true,
     confirmOps: true,
+    // Defaults to the sibling Buffers dev build so F4 works out of the box; edit
+    // it in Settings to point at an installed Buffers.
+    editorPath: isMac ? "" : "D:\\Repositories\\buffers\\src-tauri\\target\\release\\buffers.exe",
     devTools: false,
   } as Settings,
   // One global list-view column spec (order + widths), shared across every

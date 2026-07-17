@@ -138,6 +138,9 @@ export interface Settings {
   linkedSort: boolean;
   /** Ask before copy / move / delete operations. */
   confirmOps: boolean;
+  /** External editor launched by F4 (the Buffers executable). Empty ⇒ F4 asks to
+      set it. Path to buffers.exe on Windows / the Buffers binary elsewhere. */
+  editorPath: string;
   /** Enable the Web Inspector (⌥⌘I). */
   devTools: boolean;
 }

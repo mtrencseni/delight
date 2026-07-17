@@ -21,6 +21,27 @@ pub fn open_path(dir: String, name: Option<String>) -> Result<(), String> {
     open_native(&p)
 }
 
+/// Launch a specific editor executable with a file path (Delight's F4 → Buffers).
+/// On macOS a `.app` bundle is launched via `open -a`; elsewhere the binary runs
+/// directly with the path as its first argument.
+#[tauri::command]
+pub fn open_in_editor(exe: String, path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if exe.ends_with(".app") {
+        return Command::new("open")
+            .args(["-a", &exe])
+            .arg(&path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string());
+    }
+    Command::new(&exe)
+        .arg(&path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 #[cfg(target_os = "macos")]
 fn open_native(p: &PathBuf) -> Result<(), String> {
     Command::new("open").arg(p).spawn().map(|_| ()).map_err(|e| e.to_string())
