@@ -22,6 +22,9 @@ interface TabView {
   sidebar?: FavSidebar;
   settings?: SettingsPage;
   keybindings?: KeybindingsPage;
+  /** Which pane (if any) had an opposite-pane preview open when we last left this
+      tab, so switching back reopens it. Transient (session-only). */
+  previewSourceIdx?: 0 | 1 | null;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string): HTMLElementTagNameMap[K] {
@@ -181,6 +184,7 @@ class App {
       newFolder: () => void this.doNewFolder(),
       trash: () => void this.doTrash(),
       toggleMark: () => this.activePane()?.markCursorAndAdvance(),
+      markItem: () => this.activePane()?.markCursor(),
       selectUp: () => this.activePane()?.extendCursor(-1),
       selectDown: () => this.activePane()?.extendCursor(1),
       selectAll: () => this.activePane()?.selectAll(),
@@ -702,10 +706,14 @@ class App {
   }
 
   activateTab(i: number): void {
-    this.closePanePreview(); // a preview belongs to the tab it was opened in
+    // A preview belongs to the tab it was opened in: stash whether the outgoing
+    // tab had one, close it, then reopen the incoming tab's own preview (if any).
+    this.rememberPanePreview();
+    this.closePanePreview();
     state.activeTab = clamp(i, 0, state.tabs.length - 1);
     this.applyActiveTab();
     this.syncActiveTabClass();
+    this.restorePanePreview();
     persist();
   }
 
@@ -1177,6 +1185,31 @@ class App {
     this.previewTarget?.hidePreview();
     this.previewSource = null;
     this.previewTarget = null;
+  }
+
+  /** Record on the active tab which pane (if any) is currently previewing, so
+      activateTab can reopen it when we come back. Call before closePanePreview. */
+  private rememberPanePreview(): void {
+    const tab = state.tabs[state.activeTab];
+    const v = tab ? this.views.get(tab.id) : null;
+    if (!v?.panes) return;
+    const idx = this.previewSource ? v.panes.indexOf(this.previewSource) : -1;
+    v.previewSourceIdx = idx === 0 || idx === 1 ? idx : null;
+  }
+
+  /** Reopen the newly-active tab's remembered opposite-pane preview, if it had
+      one when we last left it. Call after the tab's view is active. */
+  private restorePanePreview(): void {
+    if (!state.settings.previewPane) return; // opposite-pane preview is off
+    const tab = state.tabs[state.activeTab];
+    if (tab?.kind !== "files") return;
+    const v = this.views.get(tab.id);
+    const idx = v?.previewSourceIdx;
+    if ((idx !== 0 && idx !== 1) || !v?.panes) return;
+    // Single-pane tabs preview too (the hidden pane 1 becomes the preview pane),
+    // so restore them as well — only the source pane index matters here.
+    const source = v.panes[idx];
+    if (source.currentEntry()) this.togglePanePreview(source); // nothing open → opens
   }
 
   private doPreview(): void {

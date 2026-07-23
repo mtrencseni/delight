@@ -1889,10 +1889,29 @@ export class PaneView {
   }
 
   /** ⇧-Arrow: keep the anchor, move the cursor, and grow/shrink the range. */
+  /** Shift+→: toggle the mark on the current row, without moving the cursor. */
+  markCursor(): void {
+    this.markKbNav();
+    const i = this.st.cursor;
+    if (!this.isSelectable(i)) return;
+    if (this.selection.has(i)) this.selection.delete(i);
+    else this.selection.add(i);
+    this.anchor = i;
+    this.commitCursor(false);
+  }
+
+  /** Shift+↓ / Shift+↑: mark the current and adjacent row, then step onto it —
+      an additive walk (never unmarks; use Shift+→ or ⌘-click to deselect). */
   extendCursor(d: number): void {
     this.markKbNav();
     const step = this.isGrid() ? this.gridCols() : 1;
-    this.selectToAnchor(this.st.cursor + d * step);
+    const from = this.st.cursor;
+    const target = this.clampIndex(from + d * step);
+    if (this.isSelectable(from)) this.selection.add(from);
+    if (this.isSelectable(target)) this.selection.add(target);
+    this.st.cursor = target;
+    this.anchor = target;
+    this.commitCursor(true);
   }
 
   /** ⌘A: select every real entry (skips ".."). */

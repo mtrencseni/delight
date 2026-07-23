@@ -647,30 +647,15 @@ body.col-resizing * {
 
 /* Marked items (Insert / multi-select) are highlighted red (Total Commander), so
    the marked set is obvious and distinct from the cursor moving through it. */
+/* Marked = red TEXT only (Total Commander), no background/outline, so the mark
+   stays visible over the cursor highlight, hover and zebra stripes. */
 .row.is-marked,
 .crow.is-marked,
-.tile.is-marked {
-  position: relative;
-  background: var(--marked-soft);
-  color: var(--marked);
-}
+.tile.is-marked,
 .row.is-marked .fname,
 .crow.is-marked .fname,
 .tile.is-marked .fname {
   color: var(--marked);
-}
-.row.is-marked::before,
-.crow.is-marked::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: var(--marked);
-}
-.tile.is-marked {
-  box-shadow: inset 0 0 0 2px var(--marked);
 }
 
 .cell {

@@ -32,6 +32,7 @@ export type CommandId =
   | "newFolder"
   | "trash"
   | "toggleMark"
+  | "markItem"
   | "selectUp"
   | "selectDown"
   | "selectAll"
@@ -106,6 +107,7 @@ export const COMMANDS: Command[] = [
   // Insert marks the current item and steps down (Total Commander). On Mac
   // laptops without an Insert key, rebind it in the Shortcuts tab.
   { id: "toggleMark", label: "Select / deselect item", group: "Selection", defaults: ["Insert"] },
+  { id: "markItem", label: "Select / deselect current (stay)", group: "Selection", defaults: ["Shift+ArrowRight"] },
   { id: "selectUp", label: "Extend selection up", group: "Selection", defaults: ["Shift+ArrowUp"] },
   { id: "selectDown", label: "Extend selection down", group: "Selection", defaults: ["Shift+ArrowDown"] },
   { id: "selectAll", label: "Select all", group: "Selection", defaults: [`${MOD}+KeyA`] },
