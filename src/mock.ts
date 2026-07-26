@@ -284,8 +284,10 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
           done.push(it.name);
         }
       }
-      return { done, skipped } as T;
+      return { done, skipped, cancelled: false } as T;
     }
+    case "cancel_op":
+      return undefined as T;
     case "rename_entry": {
       const rec = dirRecord(String(args?.dir ?? ""));
       const name = String(args?.name ?? "");
@@ -307,11 +309,15 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
       return undefined as T;
     }
     case "trash_entries": {
+      const done: string[] = [];
       for (const it of (args?.items ?? []) as { dir: string; name: string }[]) {
         const rec = dirRecord(it.dir);
-        if (rec) delete rec[it.name];
+        if (rec && rec[it.name]) {
+          delete rec[it.name];
+          done.push(it.name);
+        }
       }
-      return undefined as T;
+      return { done, skipped: [], cancelled: false } as T;
     }
 
     case "dir_signature": {
@@ -336,6 +342,7 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
       return [
         { name: SEP, path: SEP },
         { name: "C:", path: "C:\\" },
+        { name: "D:", path: "D:\\" },
       ] as T;
     case "dropbox_dir":
       return (HOME + "/Dropbox") as T;

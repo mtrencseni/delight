@@ -45,6 +45,7 @@ pub fn run() {
             ops::rename_entry,
             ops::create_folder,
             ops::trash_entries,
+            ops::cancel_op,
             icons::file_icon,
             details::item_details,
             details::file_thumbnail,

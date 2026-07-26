@@ -10,10 +10,18 @@ import { COMMANDS, mergeKeybindings, type CommandId } from "./commands";
 import { applyTheme, effectiveTheme, onThemeChange } from "./theme";
 import { toast } from "./toast";
 import { confirmDialog, promptDialog } from "./dialog";
+import { ProgressHandle, type OpProgress } from "./progress";
 import { icons } from "./icons";
 import { buildSettingsPage, type SettingsPage } from "./settingsPage";
 import { buildKeybindingsPage, type KeybindingsPage } from "./keybindingsPage";
 import { baseName, clamp, withSep } from "./format";
+
+/** Result of a copy/move/trash op (see ops.rs `OpResult`). */
+interface OpResult {
+  done: string[];
+  skipped: string[];
+  cancelled: boolean;
+}
 
 interface TabView {
   el: HTMLElement;
@@ -48,6 +56,8 @@ class App {
   /** In-pane preview: the browsed (source) pane and the pane showing the preview. */
   private previewSource: PaneView | null = null;
   private previewTarget: PaneView | null = null;
+  /** Live file operations' progress dialogs, keyed by op id. */
+  private ops = new Map<string, ProgressHandle>();
   /** Combo string → command id, rebuilt whenever bindings change. */
   private comboMap = new Map<string, CommandId>();
   private commandHandlers: Record<CommandId, () => boolean | void> = {} as any;
@@ -222,6 +232,9 @@ class App {
 
     // Quick Look reports its current item as the user arrows; follow it.
     onEvent<number>("ql-index", (idx) => this.previewPane?.applyPreviewIndex(idx));
+
+    // File operations stream byte/item progress; route it to the op's dialog.
+    onEvent<OpProgress>("op-progress", (p) => this.ops.get(p.id)?.update(p));
 
     // The native window starts hidden (visible: false) to avoid a white flash
     // while the page loads. Now that the shell is built and the first tab is
@@ -948,22 +961,45 @@ class App {
       overwrite = conflicts.length > 0;
     }
 
-    try {
-      const cmd = move ? "move_entries" : "copy_entries";
-      const res = await invoke<{ done: string[]; skipped: string[] }>(cmd, {
-        items: items.map(({ dir, name }) => ({ dir, name })),
-        dest: destDir,
-        overwrite,
-      });
-      await Promise.all([src.softReload(), dst.softReload()]);
-      const done = res.done.length;
+    const res = await this.runWithProgress(move ? "Moving" : "Copying", move ? "move_entries" : "copy_entries", {
+      items: items.map(({ dir, name }) => ({ dir, name })),
+      dest: destDir,
+      overwrite,
+    });
+    if (!res) return;
+    await Promise.all([src.softReload(), dst.softReload()]);
+    const past = move ? "Moved" : "Copied";
+    const done = res.done.length;
+    if (res.cancelled) {
+      toast(`Cancelled — ${past.toLowerCase()} ${done} before stopping`);
+    } else {
       toast(
         res.skipped.length
-          ? `${verb.slice(0, -1)}${move ? "d" : "ied"} ${done}, skipped ${res.skipped.length}`
-          : `${verb.slice(0, -1)}${move ? "d" : "ied"} ${this.plural(done, "item")}`
+          ? `${past} ${done}, skipped ${res.skipped.length}`
+          : `${past} ${this.plural(done, "item")}`
       );
+    }
+  }
+
+  /** Run a mutating backend op (copy/move/trash) behind a progress dialog that the
+      user can send to the background or cancel. Resolves with the OpResult, or null
+      if it errored (already toasted). */
+  private async runWithProgress(title: string, cmd: string, args: Record<string, unknown>): Promise<OpResult | null> {
+    const id =
+      typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `op-${Date.now()}-${Math.random()}`;
+    const handle = new ProgressHandle({
+      title,
+      onCancel: () => void invoke("cancel_op", { id }),
+    });
+    this.ops.set(id, handle);
+    try {
+      return await invoke<OpResult>(cmd, { id, ...args });
     } catch (e) {
       toast(String(e));
+      return null;
+    } finally {
+      this.ops.delete(id);
+      handle.close();
     }
   }
 
@@ -1077,13 +1113,13 @@ class App {
       });
       if (!ok) return;
     }
-    try {
-      await invoke("trash_entries", { items: items.map(({ dir, name }) => ({ dir, name })) });
-      await p.softReload();
-      toast(`Moved ${this.plural(items.length, "item")} to Trash`);
-    } catch (e) {
-      toast(String(e));
-    }
+    const res = await this.runWithProgress("Deleting", "trash_entries", {
+      items: items.map(({ dir, name }) => ({ dir, name })),
+    });
+    if (!res) return;
+    await p.softReload();
+    if (res.cancelled) toast(`Cancelled — moved ${res.done.length} to Trash`);
+    else toast(`Moved ${this.plural(res.done.length, "item")} to Trash`);
   }
 
   switchPane(): boolean {
@@ -1254,13 +1290,16 @@ class App {
     return !!panes[index];
   }
 
-  /** Alt+F1 / Alt+F2 (Windows): open the left/right pane's drive-letter picker. */
+  /** Alt+F1 / Alt+F2 (Windows): open the left/right pane's drive-letter picker.
+      In single-pane mode there's only one visible pane, so both keys target it. */
   private openDrives(index: 0 | 1): boolean {
-    const panes = this.views.get(state.tabs[state.activeTab]?.id ?? -1)?.panes;
+    const tab = state.tabs[state.activeTab];
+    const panes = this.views.get(tab?.id ?? -1)?.panes;
     if (!panes) return false;
-    panes[index === 0 ? 1 : 0]?.closeAllPopovers(); // close the other pane's picker first
-    panes[index]?.openDrives();
-    return !!panes[index];
+    const target = tab?.single ? tab.activePane : index;
+    panes[target === 0 ? 1 : 0]?.closeAllPopovers(); // close the other pane's picker first
+    panes[target]?.openDrives();
+    return !!panes[target];
   }
 
   // ---- keyboard bindings -----------------------------------------------------

@@ -2435,10 +2435,28 @@ export class PaneView {
     items[this.driveActive]?.scrollIntoView({ block: "nearest" });
   }
 
+  /** The drive letter for a root, e.g. "C:\" or a "C: Windows" label → "C". */
+  private driveKeyOf(d: { name: string; path: string }): string | null {
+    return driveLetter(d.path) ?? d.name.match(/[A-Za-z0-9]/)?.[0]?.toUpperCase() ?? null;
+  }
+
   private onDriveKey(e: KeyboardEvent): void {
     const n = this.driveList.length;
     if (n === 0) {
       if (e.key === "Escape") this.closeDrives();
+      return;
+    }
+    // A bare letter/number jumps straight to that drive (Total Commander style):
+    // C → C:\, D → D:\, etc. Swallow all such keys so they don't leak to shortcuts.
+    if (e.key.length === 1 && /[a-z0-9]/i.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      const want = e.key.toUpperCase();
+      const d = this.driveList.find((x) => this.driveKeyOf(x) === want);
+      if (d) {
+        this.closeDrives();
+        void this.navigate(d.path);
+      }
       return;
     }
     switch (e.key) {
