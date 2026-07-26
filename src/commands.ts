@@ -33,9 +33,12 @@ export type CommandId =
   | "trash"
   | "toggleMark"
   | "markItem"
+  | "unmarkItem"
   | "selectUp"
   | "selectDown"
   | "selectAll"
+  | "selectGroup"
+  | "unselectGroup"
   | "sortName"
   | "sortExt"
   | "sortSize"
@@ -107,10 +110,26 @@ export const COMMANDS: Command[] = [
   // Insert marks the current item and steps down (Total Commander). On Mac
   // laptops without an Insert key, rebind it in the Shortcuts tab.
   { id: "toggleMark", label: "Select / deselect item", group: "Selection", defaults: ["Insert"] },
-  { id: "markItem", label: "Select / deselect current (stay)", group: "Selection", defaults: ["Shift+ArrowRight"] },
-  { id: "selectUp", label: "Extend selection up", group: "Selection", defaults: ["Shift+ArrowUp"] },
-  { id: "selectDown", label: "Extend selection down", group: "Selection", defaults: ["Shift+ArrowDown"] },
-  { id: "selectAll", label: "Select all", group: "Selection", defaults: [`${MOD}+KeyA`] },
+  { id: "markItem", label: "Select current (stay)", group: "Selection", defaults: ["Shift+ArrowRight"] },
+  { id: "unmarkItem", label: "Deselect current (stay)", group: "Selection", defaults: ["Shift+ArrowLeft"] },
+  { id: "selectUp", label: "Select current, move up", group: "Selection", defaults: ["Shift+ArrowUp"] },
+  { id: "selectDown", label: "Select current, move down", group: "Selection", defaults: ["Shift+ArrowDown"] },
+  { id: "selectAll", label: "Select all / deselect all", group: "Selection", defaults: [`${MOD}+KeyA`] },
+  // Total Commander's grey +/− "select group": a wildcard mask dialog. Both the
+  // shifted and unshifted key are bound (= and +, - and _) so it fires whether
+  // or not Shift is held, plus the numpad keys Mac laptops don't have.
+  {
+    id: "selectGroup",
+    label: "Select by mask…",
+    group: "Selection",
+    defaults: ["Equal", "Shift+Equal", "NumpadAdd"],
+  },
+  {
+    id: "unselectGroup",
+    label: "Deselect by mask…",
+    group: "Selection",
+    defaults: ["Minus", "Shift+Minus", "NumpadSubtract"],
+  },
 
   // Sorting
   { id: "sortName", label: "Sort by name", group: "Sorting", defaults: [`${MOD}+KeyN`] },
@@ -253,12 +272,15 @@ export function mergeKeybindings(saved: unknown): Record<CommandId, string[]> {
       if (Array.isArray(v) && v.every((x) => typeof x === "string")) base[c.id] = v as string[];
     }
     // Persisted configs store the FULL binding set, so newly-added default
-    // shortcuts stay shadowed by an older snapshot. Adopt the ⌘↑ / ⌘↓
-    // "jump to top/bottom" combos for configs that predate them — but only if
-    // the user hasn't since bound that combo to some other command.
+    // shortcuts stay shadowed by an older snapshot. Adopt these for configs that
+    // predate them — but only if the user hasn't since bound that combo to some
+    // other command. (⌘↑/⌘↓ "jump to top/bottom"; the unshifted "=" and shifted
+    // "_" twins of the +/− select-by-mask keys.)
     for (const [id, combo] of [
       ["cursorHome", `${MOD}+ArrowUp`],
       ["cursorEnd", `${MOD}+ArrowDown`],
+      ["selectGroup", "Equal"],
+      ["unselectGroup", "Shift+Minus"],
     ] as const) {
       const usedElsewhere = (Object.entries(base) as [CommandId, string[]][]).some(
         ([cid, combos]) => cid !== id && combos.includes(combo)

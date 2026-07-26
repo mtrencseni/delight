@@ -649,12 +649,17 @@ body.col-resizing * {
    the marked set is obvious and distinct from the cursor moving through it. */
 /* Marked = red TEXT only (Total Commander), no background/outline, so the mark
    stays visible over the cursor highlight, hover and zebra stripes. */
+/* The Ext column carries its own dim color, so it needs naming here or the
+   extension would stay grey next to a red name. The other data columns (size,
+   dates, perms) deliberately stay dim — only the file's name+ext turn red. */
 .row.is-marked,
 .crow.is-marked,
 .tile.is-marked,
 .row.is-marked .fname,
 .crow.is-marked .fname,
-.tile.is-marked .fname {
+.tile.is-marked .fname,
+.row.is-marked .col-ext,
+.crow.is-marked .col-ext {
   color: var(--marked);
 }
 
@@ -864,7 +869,7 @@ body.col-resizing * {
 /* Finder-style (dark): focused selection is a solid blue bar with light text.
    In light theme the cursor stays a pale wash, so normal colors remain. */
 :root[data-theme="dark"] .pane.is-active .row.is-selected,
-:root[data-theme="dark"] .pane.is-active .row.is-selected .col-ext,
+:root[data-theme="dark"] .pane.is-active .row.is-selected:not(.is-marked) .col-ext,
 :root[data-theme="dark"] .pane.is-active .row.is-selected .col-size,
 :root[data-theme="dark"] .pane.is-active .row.is-selected .col-created,
 :root[data-theme="dark"] .pane.is-active .row.is-selected .col-perms,
@@ -872,7 +877,7 @@ body.col-resizing * {
 :root[data-theme="dark"] .pane.is-active .row.is-selected .ficon,
 :root[data-theme="dark"] .pane.is-active .row.is-selected .disclose,
 :root[data-theme="dark"] .pane.is-active .crow.is-selected,
-:root[data-theme="dark"] .pane.is-active .crow.is-selected .col-ext,
+:root[data-theme="dark"] .pane.is-active .crow.is-selected:not(.is-marked) .col-ext,
 :root[data-theme="dark"] .pane.is-active .crow.is-selected .col-size,
 :root[data-theme="dark"] .pane.is-active .crow.is-selected .col-created,
 :root[data-theme="dark"] .pane.is-active .crow.is-selected .col-perms,

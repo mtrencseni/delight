@@ -37,6 +37,28 @@ const OVERSCAN = 8;
 function codePreviewText(res: { text: string; truncated: boolean }): string {
   return res.truncated ? res.text.replace(/\n?$/, "\n\n… (file truncated for preview)\n") : res.text;
 }
+
+/** Compile a Total-Commander-style selection mask into a name predicate:
+    `*` = any run, `?` = one character, `;` separates alternatives, matching is
+    case-insensitive. `*.*` (and a bare `*`) mean "everything" — TC treats the
+    default mask as matching extension-less names too, not just `<stem>.<ext>`.
+    Returns null for an empty mask so the caller can no-op. */
+function maskMatcher(mask: string): ((name: string) => boolean) | null {
+  const parts = mask
+    .split(";")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (!parts.length) return null;
+  if (parts.some((p) => p === "*.*" || p === "*")) return () => true;
+  const res = parts.map(
+    (p) =>
+      new RegExp(
+        "^" + p.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$",
+        "i"
+      )
+  );
+  return (name) => res.some((re) => re.test(name));
+}
 // Grid tile chrome (px, independent of zoom — the size slider controls scale).
 const TILE_GUTTER = 30; // horizontal breathing room per tile
 const TILE_LABEL = 42; // icon-to-baseline + two lines of name
@@ -1888,40 +1910,61 @@ export class PaneView {
     return s;
   }
 
-  /** ⇧-Arrow: keep the anchor, move the cursor, and grow/shrink the range. */
-  /** Shift+→: toggle the mark on the current row, without moving the cursor. */
-  markCursor(): void {
+  /** Shift+→ / Shift+←: mark (or unmark) the current row, cursor stays put. */
+  markCursor(select: boolean): void {
     this.markKbNav();
     const i = this.st.cursor;
     if (!this.isSelectable(i)) return;
-    if (this.selection.has(i)) this.selection.delete(i);
-    else this.selection.add(i);
+    if (select) this.selection.add(i);
+    else this.selection.delete(i);
     this.anchor = i;
     this.commitCursor(false);
   }
 
-  /** Shift+↓ / Shift+↑: mark the current and adjacent row, then step onto it —
-      an additive walk (never unmarks; use Shift+→ or ⌘-click to deselect). */
+  /** Shift+↓ / Shift+↑: mark the row we're leaving, then step off it. Only the
+      row under the cursor is marked — the one we land on stays unmarked, so a
+      run of Shift+↓ marks exactly the rows it passed over. */
   extendCursor(d: number): void {
     this.markKbNav();
     const step = this.isGrid() ? this.gridCols() : 1;
     const from = this.st.cursor;
-    const target = this.clampIndex(from + d * step);
     if (this.isSelectable(from)) this.selection.add(from);
-    if (this.isSelectable(target)) this.selection.add(target);
+    const target = this.clampIndex(from + d * step);
     this.st.cursor = target;
     this.anchor = target;
     this.commitCursor(true);
   }
 
-  /** ⌘A: select every real entry (skips ".."). */
+  /** ⌘A: select every real entry (skips ".."), or — when anything is already
+      marked — clear the selection, so ⌘A toggles between all and none. */
   selectAll(): void {
     const s = new Set<number>();
-    this.view.forEach((r, i) => {
-      if (r.entry !== UP_ENTRY) s.add(i);
-    });
+    if (this.selection.size === 0) {
+      this.view.forEach((r, i) => {
+        if (r.entry !== UP_ENTRY) s.add(i);
+      });
+    }
     this.selection = s;
     this.commitCursor(false);
+  }
+
+  /** + / − : add (or remove) every entry matching a wildcard mask. Returns how
+      many rows actually changed, so the caller can report it. */
+  selectByMask(mask: string, select: boolean): number {
+    const match = maskMatcher(mask);
+    if (!match) return 0;
+    let n = 0;
+    this.view.forEach((r, i) => {
+      if (!this.isSelectable(i) || !match(r.entry.name)) return;
+      if (select) {
+        if (!this.selection.has(i)) {
+          this.selection.add(i);
+          n++;
+        }
+      } else if (this.selection.delete(i)) n++;
+    });
+    if (n) this.commitCursor(false);
+    return n;
   }
 
   private commitCursor(ensure: boolean): void {

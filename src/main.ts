@@ -184,10 +184,13 @@ class App {
       newFolder: () => void this.doNewFolder(),
       trash: () => void this.doTrash(),
       toggleMark: () => this.activePane()?.markCursorAndAdvance(),
-      markItem: () => this.activePane()?.markCursor(),
+      markItem: () => this.activePane()?.markCursor(true),
+      unmarkItem: () => this.activePane()?.markCursor(false),
       selectUp: () => this.activePane()?.extendCursor(-1),
       selectDown: () => this.activePane()?.extendCursor(1),
       selectAll: () => this.activePane()?.selectAll(),
+      selectGroup: () => void this.doSelectByMask(true),
+      unselectGroup: () => void this.doSelectByMask(false),
       sortName: () => this.activePane()?.cycleSort("name"),
       sortExt: () => this.activePane()?.cycleSort("ext"),
       sortSize: () => this.activePane()?.cycleSort("size"),
@@ -1012,6 +1015,23 @@ class App {
     } catch (e) {
       toast(String(e));
     }
+  }
+
+  /** + / − (Total Commander's "select group"): ask for a wildcard mask, then
+      mark or unmark every matching item in the active pane. */
+  private async doSelectByMask(select: boolean): Promise<void> {
+    const p = this.activePane();
+    if (!p) return;
+    const mask = await promptDialog({
+      title: select ? "Select items matching" : "Deselect items matching",
+      value: "*.*",
+      placeholder: "*.txt;*.md",
+      confirmLabel: select ? "Select" : "Deselect",
+    });
+    if (mask == null) return;
+    const n = p.selectByMask(mask, select);
+    if (!n) toast("No matching items");
+    else toast(`${select ? "Selected" : "Deselected"} ${n} item${n === 1 ? "" : "s"}`);
   }
 
   private async doNewFolder(): Promise<void> {
