@@ -25,6 +25,7 @@ export type CommandId =
   | "cursorEnd"
   | "open"
   | "up"
+  | "find"
   | "editFile"
   | "copyToOther"
   | "moveToOther"
@@ -52,6 +53,7 @@ export type CommandId =
   | "zoomOut"
   | "zoomReset"
   | "toggleHidden"
+  | "keyboardMap"
   | "preview"
   | "closePreview"
   | "devtools"
@@ -66,6 +68,9 @@ export type CommandId =
 export interface Command {
   id: CommandId;
   label: string;
+  /** Compact label for the keyboard map, where a key is only so wide. The full
+      `label` still shows in the Shortcuts tab and as the key's tooltip. */
+  short?: string;
   group: string;
   /** Default bindings, as canonical combo strings (e.g. `${MOD}+KeyT`). MOD is
    *  "Meta" (⌘) on macOS and "Ctrl" everywhere else, so every ⌘-shortcut maps to
@@ -78,9 +83,9 @@ export const COMMANDS: Command[] = [
   { id: "newTab", label: "New tab", group: "Tabs", defaults: [`${MOD}+KeyT`] },
   { id: "closeTab", label: "Close tab", group: "Tabs", defaults: [`${MOD}+KeyW`] },
   { id: "nextTab", label: "Next tab", group: "Tabs", defaults: [`${MOD}+Shift+BracketRight`, "Ctrl+Tab"] },
-  { id: "prevTab", label: "Previous tab", group: "Tabs", defaults: [`${MOD}+Shift+BracketLeft`, "Ctrl+Shift+Tab"] },
+  { id: "prevTab", label: "Previous tab", short: "Prev tab", group: "Tabs", defaults: [`${MOD}+Shift+BracketLeft`, "Ctrl+Shift+Tab"] },
   { id: "cycleTabs", label: "Cycle tabs", group: "Tabs", defaults: [`${MOD}+Backquote`] },
-  { id: "openSettings", label: "Open settings", group: "Tabs", defaults: [`${MOD}+Comma`] },
+  { id: "openSettings", label: "Open settings", short: "Settings", group: "Tabs", defaults: [`${MOD}+Comma`] },
 
   // Panes & navigation
   { id: "switchPane", label: "Switch pane", group: "Panes & navigation", defaults: ["Tab"] },
@@ -88,83 +93,89 @@ export const COMMANDS: Command[] = [
   { id: "cursorDown", label: "Move down", group: "Panes & navigation", defaults: ["ArrowDown"] },
   // Plain → / ← jump between recent folders (nextVisited/prevVisited); ⌘→ / ⌘←
   // (Ctrl→ / Ctrl← on Windows) open / close the in-list tree.
-  { id: "expand", label: "Expand / open folder", group: "Panes & navigation", defaults: [`${MOD}+ArrowRight`] },
-  { id: "collapse", label: "Collapse / to parent", group: "Panes & navigation", defaults: [`${MOD}+ArrowLeft`] },
-  { id: "nextVisited", label: "Next recent folder", group: "Panes & navigation", defaults: ["ArrowRight"] },
-  { id: "prevVisited", label: "Previous recent folder", group: "Panes & navigation", defaults: ["ArrowLeft"] },
+  { id: "expand", label: "Expand / open folder", short: "Expand", group: "Panes & navigation", defaults: [`${MOD}+ArrowRight`] },
+  { id: "collapse", label: "Collapse / to parent", short: "Collapse", group: "Panes & navigation", defaults: [`${MOD}+ArrowLeft`] },
+  { id: "nextVisited", label: "Next recent folder", short: "Next recent", group: "Panes & navigation", defaults: ["ArrowRight"] },
+  { id: "prevVisited", label: "Previous recent folder", short: "Prev recent", group: "Panes & navigation", defaults: ["ArrowLeft"] },
   { id: "pageUp", label: "Page up", group: "Panes & navigation", defaults: ["PageUp"] },
   { id: "pageDown", label: "Page down", group: "Panes & navigation", defaults: ["PageDown"] },
-  { id: "cursorHome", label: "Jump to top", group: "Panes & navigation", defaults: ["Home", `${MOD}+ArrowUp`] },
-  { id: "cursorEnd", label: "Jump to bottom", group: "Panes & navigation", defaults: ["End", `${MOD}+ArrowDown`] },
+  { id: "cursorHome", label: "Jump to top", short: "Top", group: "Panes & navigation", defaults: ["Home", `${MOD}+ArrowUp`] },
+  { id: "cursorEnd", label: "Jump to bottom", short: "Bottom", group: "Panes & navigation", defaults: ["End", `${MOD}+ArrowDown`] },
   { id: "open", label: "Open", group: "Panes & navigation", defaults: ["Enter"] },
-  { id: "up", label: "Go up a folder", group: "Panes & navigation", defaults: ["Backspace"] },
+  { id: "up", label: "Go up a folder", short: "Up a folder", group: "Panes & navigation", defaults: ["Backspace"] },
+  // Quick-search inside the active pane. Binding it here is also what stops the
+  // webview's own find bar from popping up (the handler preventDefaults it).
+  { id: "find", label: "Find file in pane", short: "Find", group: "Panes & navigation", defaults: [`${MOD}+KeyF`] },
   // Archives are entered explicitly, so plain Enter on a .docx/.apk still opens
   // it in its app rather than showing the zip guts.
-  { id: "enterArchive", label: "Open archive as folder", group: "Panes & navigation", defaults: [`${MOD}+Enter`] },
+  { id: "enterArchive", label: "Open archive as folder", short: "Archive", group: "Panes & navigation", defaults: [`${MOD}+Enter`] },
 
   // File operations. Windows/Linux use the classic Norton Commander / Total
   // Commander F-keys (F4 edit … F8 delete); macOS uses the number row instead,
   // since the F-keys there need the Fn modifier to fire as a single press.
-  { id: "editFile", label: "Edit (open in Buffers)", group: "File operations", defaults: isMac ? ["Digit4"] : ["F4"] },
-  { id: "copyToOther", label: "Copy to other pane", group: "File operations", defaults: isMac ? ["Digit5"] : ["F5"] },
-  { id: "moveToOther", label: "Move to other pane", group: "File operations", defaults: isMac ? ["Digit6"] : ["F6"] },
+  { id: "editFile", label: "Edit (open in Buffers)", short: "Edit", group: "File operations", defaults: isMac ? ["Digit4"] : ["F4"] },
+  { id: "copyToOther", label: "Copy to other pane", short: "Copy", group: "File operations", defaults: isMac ? ["Digit5"] : ["F5"] },
+  { id: "moveToOther", label: "Move to other pane", short: "Move", group: "File operations", defaults: isMac ? ["Digit6"] : ["F6"] },
   { id: "rename", label: "Rename", group: "File operations", defaults: isMac ? ["Shift+Digit6"] : ["Shift+F6"] },
   { id: "newFolder", label: "New folder", group: "File operations", defaults: isMac ? ["Digit7"] : ["F7"] },
-  { id: "trash", label: "Move to Trash", group: "File operations", defaults: isMac ? ["Digit8"] : ["F8"] },
-  { id: "pack", label: "Pack into zip", group: "File operations", defaults: isMac ? ["Alt+Digit5"] : ["Alt+F5"] },
-  { id: "unpack", label: "Unpack archive", group: "File operations", defaults: isMac ? ["Alt+Digit9"] : ["Alt+F9"] },
+  { id: "trash", label: "Move to Trash", short: "Trash", group: "File operations", defaults: isMac ? ["Digit8"] : ["F8"] },
+  { id: "pack", label: "Pack into zip", short: "Pack", group: "File operations", defaults: isMac ? ["Alt+Digit5"] : ["Alt+F5"] },
+  { id: "unpack", label: "Unpack archive", short: "Unpack", group: "File operations", defaults: isMac ? ["Alt+Digit9"] : ["Alt+F9"] },
 
   // Selection
   // Insert marks the current item and steps down (Total Commander). On Mac
   // laptops without an Insert key, rebind it in the Shortcuts tab.
-  { id: "toggleMark", label: "Select / deselect item", group: "Selection", defaults: ["Insert"] },
-  { id: "markItem", label: "Select current (stay)", group: "Selection", defaults: ["Shift+ArrowRight"] },
-  { id: "unmarkItem", label: "Deselect current (stay)", group: "Selection", defaults: ["Shift+ArrowLeft"] },
-  { id: "selectUp", label: "Select current, move up", group: "Selection", defaults: ["Shift+ArrowUp"] },
-  { id: "selectDown", label: "Select current, move down", group: "Selection", defaults: ["Shift+ArrowDown"] },
-  { id: "selectAll", label: "Select all / deselect all", group: "Selection", defaults: [`${MOD}+KeyA`] },
+  { id: "toggleMark", label: "Select / deselect item", short: "Mark", group: "Selection", defaults: ["Insert"] },
+  { id: "markItem", label: "Select current (stay)", short: "Select", group: "Selection", defaults: ["Shift+ArrowRight"] },
+  { id: "unmarkItem", label: "Deselect current (stay)", short: "Deselect", group: "Selection", defaults: ["Shift+ArrowLeft"] },
+  { id: "selectUp", label: "Select current, move up", short: "Select ↑", group: "Selection", defaults: ["Shift+ArrowUp"] },
+  { id: "selectDown", label: "Select current, move down", short: "Select ↓", group: "Selection", defaults: ["Shift+ArrowDown"] },
+  { id: "selectAll", label: "Select all / deselect all", short: "Select all", group: "Selection", defaults: [`${MOD}+KeyA`] },
   // Total Commander's grey +/− "select group": a wildcard mask dialog. Both the
   // shifted and unshifted key are bound (= and +, - and _) so it fires whether
   // or not Shift is held, plus the numpad keys Mac laptops don't have.
   {
     id: "selectGroup",
     label: "Select by mask…",
+    short: "Mask +",
     group: "Selection",
     defaults: ["Equal", "Shift+Equal", "NumpadAdd"],
   },
   {
     id: "unselectGroup",
     label: "Deselect by mask…",
+    short: "Mask −",
     group: "Selection",
     defaults: ["Minus", "Shift+Minus", "NumpadSubtract"],
   },
 
   // Sorting
-  { id: "sortName", label: "Sort by name", group: "Sorting", defaults: [`${MOD}+KeyN`] },
-  { id: "sortExt", label: "Sort by extension", group: "Sorting", defaults: [`${MOD}+KeyE`] },
-  { id: "sortSize", label: "Sort by size", group: "Sorting", defaults: [`${MOD}+KeyS`] },
+  { id: "sortName", label: "Sort by name", short: "Sort name", group: "Sorting", defaults: [`${MOD}+KeyN`] },
+  { id: "sortExt", label: "Sort by extension", short: "Sort ext", group: "Sorting", defaults: [`${MOD}+KeyE`] },
+  { id: "sortSize", label: "Sort by size", short: "Sort size", group: "Sorting", defaults: [`${MOD}+KeyS`] },
   // ⌘C is the Chips-view shortcut; sort-by-created moved to ⌘⇧C.
-  { id: "sortCreated", label: "Sort by created", group: "Sorting", defaults: [`${MOD}+Shift+KeyC`] },
-  { id: "sortModified", label: "Sort by modified", group: "Sorting", defaults: [`${MOD}+KeyM`] },
+  { id: "sortCreated", label: "Sort by created", short: "Sort created", group: "Sorting", defaults: [`${MOD}+Shift+KeyC`] },
+  { id: "sortModified", label: "Sort by modified", short: "Sort modified", group: "Sorting", defaults: [`${MOD}+KeyM`] },
 
   // View
   { id: "viewList", label: "List view", group: "View", defaults: [`${MOD}+KeyL`] },
   { id: "viewChips", label: "Chips view", group: "View", defaults: [`${MOD}+KeyC`] },
   { id: "viewGrid", label: "Icon view", group: "View", defaults: [`${MOD}+KeyI`] },
-  { id: "toggleSingle", label: "Single-pane view", group: "View", defaults: [`${MOD}+KeyP`] },
+  { id: "toggleSingle", label: "Single-pane view", short: "Single pane", group: "View", defaults: [`${MOD}+KeyP`] },
   { id: "zoomIn", label: "Zoom in", group: "View", defaults: [`${MOD}+Equal`, `${MOD}+NumpadAdd`] },
   { id: "zoomOut", label: "Zoom out", group: "View", defaults: [`${MOD}+Minus`, `${MOD}+NumpadSubtract`] },
   { id: "zoomReset", label: "Reset zoom", group: "View", defaults: [`${MOD}+Digit0`, `${MOD}+Numpad0`] },
-  { id: "toggleHidden", label: "Toggle hidden files", group: "View", defaults: [`${MOD}+Shift+Period`] },
+  { id: "toggleHidden", label: "Toggle hidden files", short: "Hidden", group: "View", defaults: [`${MOD}+Shift+Period`] },
+  { id: "keyboardMap", label: "Keyboard map", short: "Keys", group: "View", defaults: [`${MOD}+KeyK`] },
   // Space previews everywhere; the secondary key is F3 ("view") on Windows/Linux,
   // the number row (⌘-free "3") on macOS — matching the file-op key scheme above.
   { id: "preview", label: "Preview", group: "View", defaults: isMac ? ["Space", "Digit3"] : ["Space", "F3"] },
   { id: "closePreview", label: "Close preview", group: "View", defaults: ["Escape"] },
-  { id: "devtools", label: "Developer tools", group: "View", defaults: [`${MOD}+Alt+KeyI`] },
+  { id: "devtools", label: "Developer tools", short: "Dev tools", group: "View", defaults: [`${MOD}+Alt+KeyI`] },
 
   // Favorites
-  { id: "favoritesLeft", label: "Favorites — left pane", group: "Favorites", defaults: [`${MOD}+Digit1`] },
-  { id: "favoritesRight", label: "Favorites — right pane", group: "Favorites", defaults: [`${MOD}+Digit2`] },
+  { id: "favoritesLeft", label: "Favorites — left pane", short: "Favorites L", group: "Favorites", defaults: [`${MOD}+Digit1`] },
+  { id: "favoritesRight", label: "Favorites — right pane", short: "Favorites R", group: "Favorites", defaults: [`${MOD}+Digit2`] },
 
   // Drives (Windows/Linux only — a single root on macOS makes a drive picker
   // meaningless, so these commands aren't registered there). Alt+F1/F2 open a
@@ -172,8 +183,8 @@ export const COMMANDS: Command[] = [
   ...(isMac
     ? []
     : ([
-        { id: "drivesLeft", label: "Drives — left pane", group: "Panes & navigation", defaults: ["Alt+F1"] },
-        { id: "drivesRight", label: "Drives — right pane", group: "Panes & navigation", defaults: ["Alt+F2"] },
+        { id: "drivesLeft", label: "Drives — left pane", short: "Drives L", group: "Panes & navigation", defaults: ["Alt+F1"] },
+        { id: "drivesRight", label: "Drives — right pane", short: "Drives R", group: "Panes & navigation", defaults: ["Alt+F2"] },
       ] as Command[])),
 ];
 

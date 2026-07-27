@@ -8,6 +8,8 @@ export const PREVIEW_SIZES = [512, 1024, 2048];
 /** Cache sizes offered for the "recent folders" highlight. */
 export const VISITED_SIZES = [50, 100, 200, 500];
 /** Byte caps offered for the read-only code preview (10K default → 10M). */
+/** Choices for "Show progress after" (ms); 0 shows the dialog immediately. */
+export const PROGRESS_DELAYS = [0, 250, 500, 1000];
 export const CODE_PREVIEW_BYTES = [10 * 1024, 100 * 1024, 1024 * 1024, 10 * 1024 * 1024];
 export const GRID_MIN = 48;
 export const GRID_MAX = 160;
@@ -43,6 +45,8 @@ export const state = {
     visitedCacheSize: 100,
     linkedSort: true,
     confirmOps: true,
+    progressDelayMs: 250,
+    findMatch: "prefix",
     // Defaults to the sibling Buffers dev build so F4 works out of the box; edit
     // it in Settings to point at an installed Buffers.
     editorPath: isMac ? "" : "D:\\Repositories\\buffers\\src-tauri\\target\\release\\buffers.exe",

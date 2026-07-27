@@ -5,8 +5,18 @@
 //
 // It's a dumb view: the caller drives it with update() from "op-progress" events
 // and calls close() when the backend invoke resolves. Cross-platform — plain DOM.
+//
+// Fast operations must never flash it. The card is built up front but only put
+// in the document after `delayMs` (Settings → "Show progress after"), so an op
+// that finishes first never shows anything at all; and once it IS up it stays
+// for MIN_VISIBLE_MS, so an op landing just past the threshold doesn't blink.
 
 import { humanSize } from "./format";
+
+/** Once the card is up, keep it up at least this long. Without this the delay
+    would only move the flash rather than remove it: an op finishing a few ms
+    past the threshold would show the card for a frame or two. */
+const MIN_VISIBLE_MS = 400;
 
 /** Payload of the backend "op-progress" event (see ops.rs). */
 export interface OpProgress {
@@ -22,6 +32,9 @@ interface ProgressOpts {
   title: string;
   /** User asked to stop — the caller should invoke `cancel_op`. */
   onCancel: () => void;
+  /** Hold the dialog back this long before showing it, so quick operations
+      complete without ever putting it on screen. 0 shows it immediately. */
+  delayMs?: number;
 }
 
 function div(cls: string): HTMLDivElement {
@@ -39,6 +52,9 @@ export class ProgressHandle {
   private bgBtn = document.createElement("button");
   private bg = false;
   private closed = false;
+  private showTimer: ReturnType<typeof setTimeout> | undefined;
+  private mounted = false;
+  private shownAt = 0;
 
   constructor(private opts: ProgressOpts) {
     const title = div("op-progress-title");
@@ -61,7 +77,7 @@ export class ProgressHandle {
 
     this.card.append(title, this.curEl, track, this.detailEl, actions);
     this.overlay.append(this.card);
-    document.body.append(this.overlay);
+    // NOT added to the document yet — mount() does that, now or after delayMs.
 
     // Swallow keydowns so global shortcuts don't fire under the modal; Esc cancels.
     this.overlay.tabIndex = -1;
@@ -75,6 +91,19 @@ export class ProgressHandle {
         this.setBg(false);
       }
     });
+    const delay = Math.max(0, opts.delayMs ?? 0);
+    if (delay === 0) this.mount();
+    else this.showTimer = setTimeout(() => this.mount(), delay);
+  }
+
+  /** Put the dialog on screen. Until this runs the app stays fully interactive —
+      update() keeps filling in the detached card, so when it does appear it shows
+      real progress rather than "Preparing…". */
+  private mount(): void {
+    if (this.closed || this.mounted) return;
+    this.mounted = true;
+    this.shownAt = Date.now();
+    document.body.append(this.overlay);
     this.overlay.focus();
   }
 
@@ -110,9 +139,21 @@ export class ProgressHandle {
     }
   }
 
-  close(): void {
+  /** The op finished (or errored). If the dialog never made it on screen this is
+      silent. `immediate` skips the minimum-visible hold — needed when another
+      modal is about to be raised, since this one sits above the modal layer and
+      would swallow its clicks and keys. */
+  close(immediate = false): void {
     if (this.closed) return;
     this.closed = true;
+    clearTimeout(this.showTimer);
+    if (!this.mounted) return; // never shown — nothing to tear down, no flash
+    const remaining = MIN_VISIBLE_MS - (Date.now() - this.shownAt);
+    if (!immediate && remaining > 0) setTimeout(() => this.remove(), remaining);
+    else this.remove();
+  }
+
+  private remove(): void {
     this.overlay.remove();
     this.card.remove();
   }

@@ -2222,3 +2222,237 @@ body.fav-dragging * {
 .op-progress-card.bg .op-progress-title {
   font-size: 0.8125rem;
 }
+
+/* ---------- keyboard map (⌘K) ---------- */
+.kbmap-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  animation: modalfade 0.12s ease;
+}
+
+.kbmap {
+  width: min(90rem, 98vw);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.375rem 1.5rem 1.5rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 0.875rem;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+  outline: none;
+}
+
+.kbmap-head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  column-gap: 0.75rem;
+}
+
+.kbmap-title {
+  font-size: 1.125rem;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.kbmap-sub {
+  grid-column: 1;
+  font-size: 0.875rem;
+  color: var(--text-dim);
+}
+
+.kbmap-close {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.5rem;
+  color: var(--text-dim);
+  font-size: 1rem;
+}
+
+.kbmap-close:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* The drawn keyboard: main block + the nav/arrow cluster beside it. */
+.kbmap-board {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.kbmap-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.kbmap-nav {
+  flex: 0 0 16.5rem;
+}
+
+.kbmap-row {
+  display: flex;
+  gap: 0.3125rem;
+  margin-bottom: 0.3125rem;
+}
+
+.kbkey {
+  position: relative;
+  flex: 1 0 0;
+  min-width: 0;
+  height: 4.25rem;
+  padding: 0.375rem 0.4375rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  border: 1px solid var(--border);
+  border-radius: 0.4375rem;
+  background: var(--panel-alt);
+  color: var(--text-dim);
+  overflow: hidden;
+}
+
+.kbkey-gap {
+  border: none;
+  background: none;
+}
+
+.kbkey-label {
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1;
+  flex: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The command this key runs on the current layer — the whole point of the map. */
+.kbkey-cmd {
+  /* Sized so a ~9-character word still fits one line of a 1-unit key; the key
+     itself is what got bigger, the label just has to stay inside it. */
+  font-size: 0.6875rem;
+  line-height: 1.25;
+  color: var(--accent);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  /* Wrap between words only — breaking mid-word ("Renam/e") is unreadable at
+     this size. Anything still too long is clipped; the key's tooltip has it. */
+  word-break: normal;
+  /* break-word only splits a word that cannot fit on a line of its own, so
+     multi-word labels still wrap at spaces but a long single word ("Deselect…")
+     wraps instead of being clipped. */
+  overflow-wrap: break-word;
+  hyphens: none;
+}
+
+.kbkey.is-bound {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--text);
+}
+
+/* Modifier keys carry their printed name (⌘ command), centered like the real
+   key, and never a command label — they select the layer instead. */
+.kbkey-mod {
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+}
+
+.kbkey-mod .kbkey-label {
+  font-size: 0.8125rem;
+  font-weight: 550;
+}
+
+.kbkey-mod:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* Lit while the modifier is held (or clicked to stick); sticky adds a ring so
+   the two are tellable apart. */
+.kbkey-mod.is-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.kbkey-mod.is-sticky {
+  box-shadow: inset 0 0 0 2px var(--panel), 0 0 0 2px var(--accent);
+}
+
+.kbmap-extras {
+  font-size: 0.875rem;
+  color: var(--text-dim);
+  min-height: 1.25rem;
+}
+
+/* ---------- quick-search bar (⌘F) ---------- */
+.findbar {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex: none;
+  padding: 0.375rem 0.5rem;
+  background: var(--panel-alt);
+  border-bottom: 1px solid var(--border);
+}
+
+.findbar-input {
+  font: inherit;
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  padding: 0.25rem 0.5rem;
+  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.findbar-input:focus {
+  border-color: var(--accent);
+}
+
+/* No match — tint the field rather than moving the cursor anywhere. */
+.findbar-input.bad {
+  border-color: var(--error-text);
+  color: var(--error-text);
+}
+
+.findbar-count {
+  flex: none;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.findbar-btn {
+  flex: none;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 0.3125rem;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  line-height: 1;
+}
+
+.findbar-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}

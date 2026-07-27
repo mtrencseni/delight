@@ -1,6 +1,6 @@
 import "./styles.css";
 import { invoke, isTauri, onEvent } from "./ipc";
-import { clearVisited, CODE_PREVIEW_BYTES, GRID_DEFAULT, GRID_MAX, GRID_MIN, hint, newTabId, normalizeColumnOrder, persist, PREVIEW_SIZES, rebuildVisitedIndex, state, VISITED_SIZES, ZOOM_LEVELS } from "./state";
+import { clearVisited, CODE_PREVIEW_BYTES, GRID_DEFAULT, GRID_MAX, GRID_MIN, hint, newTabId, normalizeColumnOrder, persist, PREVIEW_SIZES, PROGRESS_DELAYS, rebuildVisitedIndex, state, VISITED_SIZES, ZOOM_LEVELS } from "./state";
 import { isMac } from "./platform";
 import type { PaneState, SortDir, SortKey, Tab, Theme } from "./types";
 import { PaneView } from "./pane";
@@ -10,6 +10,7 @@ import { COMMANDS, mergeKeybindings, type CommandId } from "./commands";
 import { applyTheme, effectiveTheme, onThemeChange } from "./theme";
 import { toast } from "./toast";
 import { confirmDialog, promptDialog } from "./dialog";
+import { toggleKeyboardMap } from "./keyboardmap";
 import { ProgressHandle, type OpProgress } from "./progress";
 import { archiveFileFor, askArchivePassword, inArchive, isArchiveName, MARK, needsPassword, setArchiveFormats } from "./archive";
 import { icons } from "./icons";
@@ -51,6 +52,7 @@ class App {
   contentEl = el("div", "content");
   eyeBtn = el("button", "tbtn");
   themeBtn = el("button", "tbtn");
+  kbBtn = el("button", "tbtn");
   devBtn = el("button", "tbtn");
   spBtn = el("button", "tbtn");
   views = new Map<number, TabView>();
@@ -193,6 +195,7 @@ class App {
       cursorEnd: () => this.activePane()?.moveEnd(),
       open: () => this.activePane()?.openCursor(),
       up: () => this.activePane()?.goUp(),
+      find: () => this.activePane()?.openFind(),
       editFile: () => void this.doEdit(),
       copyToOther: () => void this.doTransfer(false),
       moveToOther: () => void this.doTransfer(true),
@@ -220,6 +223,7 @@ class App {
       zoomOut: () => this.zoomStep(-1),
       zoomReset: () => this.setZoom(state.settings.defaultZoom, true),
       toggleHidden: () => this.toggleHidden(),
+      keyboardMap: () => toggleKeyboardMap(),
       preview: () => this.doPreview(),
       closePreview: () => this.closePanePreview(),
       devtools: () => {
@@ -287,6 +291,8 @@ class App {
       if (VISITED_SIZES.includes(s.visitedCacheSize)) state.settings.visitedCacheSize = s.visitedCacheSize;
       if (typeof s.linkedSort === "boolean") state.settings.linkedSort = s.linkedSort;
       if (typeof s.confirmOps === "boolean") state.settings.confirmOps = s.confirmOps;
+      if (PROGRESS_DELAYS.includes(s.progressDelayMs)) state.settings.progressDelayMs = s.progressDelayMs;
+      if (s.findMatch === "prefix" || s.findMatch === "anywhere") state.settings.findMatch = s.findMatch;
       if (typeof s.editorPath === "string") state.settings.editorPath = s.editorPath;
       if (typeof s.devTools === "boolean") state.settings.devTools = s.devTools;
     }
@@ -323,6 +329,10 @@ class App {
     // Keep the icon in sync when the OS appearance flips while in System mode.
     onThemeChange(() => this.syncThemeBtn());
 
+    this.kbBtn.innerHTML = icons.keyboard;
+    this.kbBtn.title = `Keyboard map (${hint("keyboardMap")})`;
+    this.kbBtn.addEventListener("click", () => toggleKeyboardMap());
+
     this.devBtn.innerHTML = icons.code;
     this.devBtn.title = `Developer tools (${hint("devtools")})`;
     this.devBtn.addEventListener("click", () => void invoke("toggle_devtools").catch(() => {}));
@@ -334,8 +344,8 @@ class App {
 
     const spacer = el("div", "flexspace");
     spacer.setAttribute("data-tauri-drag-region", ""); // main window-drag zone
-    // Layout: [files tabs][+] …spacer… [system tabs][single][theme][eye][dev][gear]
-    tabbar.append(this.tabsEl, newBtn, spacer, this.sysTabsEl, this.spBtn, this.themeBtn, this.eyeBtn, this.devBtn, gearBtn);
+    // Layout: [files tabs][+] …spacer… [system tabs][single][theme][kb][eye][dev][gear]
+    tabbar.append(this.tabsEl, newBtn, spacer, this.sysTabsEl, this.spBtn, this.themeBtn, this.kbBtn, this.eyeBtn, this.devBtn, gearBtn);
     root.append(tabbar, this.contentEl);
     this.syncEye();
     this.syncThemeBtn();
@@ -624,6 +634,14 @@ class App {
         }
         persist();
       },
+      onFindMatch: (m) => {
+        state.settings.findMatch = m;
+        persist();
+      },
+      onProgressDelay: (n) => {
+        state.settings.progressDelayMs = n;
+        persist();
+      },
       onConfirmOps: (v) => {
         state.settings.confirmOps = v;
         persist();
@@ -738,6 +756,7 @@ class App {
     // tab had one, close it, then reopen the incoming tab's own preview (if any).
     this.rememberPanePreview();
     this.closePanePreview();
+    for (const v of this.views.values()) v.panes?.forEach((p) => p.closeFind());
     state.activeTab = clamp(i, 0, state.tabs.length - 1);
     this.applyActiveTab();
     this.syncActiveTabClass();
@@ -1017,6 +1036,7 @@ class App {
     const handle = new ProgressHandle({
       title,
       onCancel: () => void invoke("cancel_op", { id }),
+      delayMs: state.settings.progressDelayMs,
     });
     this.ops.set(id, handle);
     try {
@@ -1028,7 +1048,7 @@ class App {
         // Close the progress dialog FIRST: it sits above the modal layer, so a
         // prompt raised underneath it would be invisible and unclickable.
         this.ops.delete(id);
-        handle.close();
+        handle.close(true); // immediate: the password prompt goes above it
         const first = (args.items as { dir: string }[] | undefined)?.[0]?.dir ?? "";
         const file = archiveFileFor(first);
         if (file && (await askArchivePassword(file, true))) {
@@ -1301,6 +1321,7 @@ class App {
     // preview open and don't switch the active pane.
     if (this.previewTarget?.focusCodePreview()) return true;
     if (tab.single) return false; // single mode has only one pane
+    this.views.get(tab.id)?.panes?.forEach((p) => p.closeFind()); // it belongs to the pane we're leaving
     this.closePanePreview(); // the opposite pane is about to become active
     tab.activePane = tab.activePane === 0 ? 1 : 0;
     this.syncPaneActive(tab);

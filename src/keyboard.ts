@@ -31,6 +31,9 @@ const EDITOR_OWNED = new Set<CommandId>([
   // the code preview is focused.
   "expand",
   "collapse",
+  // The code preview ships CodeMirror's searchKeymap — ⌘F there should open the
+  // editor's find panel, not the pane's quick-search.
+  "find",
 ]);
 
 export interface KeyboardConfig {

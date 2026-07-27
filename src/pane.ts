@@ -4,6 +4,7 @@ import type { ChildEntry, ColKey, ColWidths, Details, Entry, Listing, Location, 
 import { baseName, clamp, displaySep, driveLetter, fmtDate, humanSize, isDriveRoot, recency, toSystemSep, withSep } from "./format";
 import { driveGlyph, fileIcon, icons } from "./icons";
 import { CodePreview, langForTextFile } from "./codepreview";
+import { FindBar } from "./findbar";
 import type { LangId } from "./langs";
 import {
   cachedDetails,
@@ -149,6 +150,8 @@ export class PaneView {
   private driveList: { name: string; path: string }[] = [];
   private headCells = new Map<SortKey, HTMLElement>();
   private view: ViewRow[] = [];
+  /** ⌘F quick-search bar, when open (see findbar.ts). */
+  private findBar: FindBar | null = null;
   private lastClick = { i: -1, t: 0 };
   /** Selected view indices (the cursor is normally one of them). */
   private selection = new Set<number>();
@@ -688,6 +691,7 @@ export class PaneView {
 
   /** Navigate to `path` (or `path`/`child`). Resolves true on success. */
   async navigate(path: string, child?: string, focusName?: string, retried = false): Promise<boolean> {
+    this.closeFind(); // matches refer to the listing we're leaving
     try {
       const l = await invoke<Listing>("list_dir", { path, child: child ?? null });
       this.st.path = l.path;
@@ -1912,6 +1916,43 @@ export class PaneView {
     }
     const step = this.isGrid() ? this.gridCols() : 1;
     this.moveCursorTo(this.st.cursor + step);
+  }
+
+  /** ⌘F: open the quick-search bar over this pane, or refocus it if it's up. */
+  openFind(): void {
+    if (this.findBar) {
+      this.findBar.focus();
+      return;
+    }
+    this.findBar = new FindBar({
+      matches: (q) => this.matchIndices(q),
+      cursor: () => this.st.cursor,
+      jump: (i) => this.setCursor(i),
+      onClose: () => {
+        this.findBar = null;
+      },
+    });
+    this.el.insertBefore(this.findBar.el, this.header);
+    this.findBar.focus();
+  }
+
+  closeFind(): void {
+    this.findBar?.close();
+  }
+
+  /** View indices whose name matches `q` (case-insensitive) — from the start of
+      the name, or anywhere in it, per Settings. ".." never matches. */
+  private matchIndices(q: string): number[] {
+    const needle = q.trim().toLowerCase();
+    if (!needle) return [];
+    const out: number[] = [];
+    this.view.forEach((r, i) => {
+      if (r.entry === UP_ENTRY) return;
+      const name = r.entry.name.toLowerCase();
+      const hit = state.settings.findMatch === "anywhere" ? name.includes(needle) : name.startsWith(needle);
+      if (hit) out.push(i);
+    });
+    return out;
   }
 
   private clampIndex(i: number): number {

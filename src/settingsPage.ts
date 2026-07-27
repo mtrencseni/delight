@@ -1,5 +1,5 @@
 import type { Settings, Theme } from "./types";
-import { CODE_PREVIEW_BYTES, hint, PREVIEW_SIZES, VISITED_SIZES, ZOOM_LEVELS } from "./state";
+import { CODE_PREVIEW_BYTES, hint, PREVIEW_SIZES, PROGRESS_DELAYS, VISITED_SIZES, ZOOM_LEVELS } from "./state";
 import { icons } from "./icons";
 import { isMac } from "./platform";
 
@@ -31,6 +31,8 @@ export interface SettingsHooks {
   onClearVisited(): void;
   onLinkedSort(v: boolean): void;
   onConfirmOps(v: boolean): void;
+  onProgressDelay(n: number): void;
+  onFindMatch(m: "prefix" | "anywhere"): void;
   onEditorPath(v: string): void;
   onOpenKeybindings(): void;
   onDevTools(v: boolean): void;
@@ -112,6 +114,33 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     });
     codeBytesBtns.set(n, b);
     codeBytesSeg.append(b);
+  }
+
+  // How long an operation must run before its progress dialog appears, so quick
+  // copies/moves finish without it ever flashing up. "Off" shows it at once.
+  const delaySeg = el("div", "seg");
+  const delayBtns = new Map<number, HTMLButtonElement>();
+  for (const n of PROGRESS_DELAYS) {
+    const b = el("button", "", n === 0 ? "Off" : n >= 1000 ? `${n / 1000}s` : `${n}ms`);
+    b.addEventListener("click", () => {
+      hooks.onProgressDelay(n);
+      sync();
+    });
+    delayBtns.set(n, b);
+    delaySeg.append(b);
+  }
+
+  // ⌘F quick-search: match from the start of the name, or anywhere in it.
+  const findSeg = el("div", "seg");
+  const findBtns = new Map<string, HTMLButtonElement>();
+  for (const [mode, label] of [["prefix", "Starts with"], ["anywhere", "Anywhere"]] as const) {
+    const b = el("button", "", label);
+    b.addEventListener("click", () => {
+      hooks.onFindMatch(mode);
+      sync();
+    });
+    findBtns.set(mode, b);
+    findSeg.append(b);
   }
 
   // Recent-folders cache size (50 / 100 / 200 / 500) + a Clear button.
@@ -242,6 +271,11 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     row("Preview in opposite pane", "Space previews the file in the other pane instead of a Quick Look window", previewPaneSw),
     row("Preview resolution", "Thumbnail size (px) for the opposite-pane preview", sizeSeg),
     row("Code preview size", "How much of a text file to load into the read-only editor preview", codeBytesSeg),
+    row(
+      "Find matches",
+      `Whether ${hint("find")} quick-search matches the start of a file name or any part of it`,
+      findSeg
+    ),
     row("Alternating row colors", "Zebra-stripe every other row in list and chips views", stripedSw),
     row("Recent folders", "Highlight folders you've recently entered when browsing their parent (←/→ jumps between them)", visitedSeg),
     row("Clear recent folders", "Forget every remembered folder", clearVisitedBtn),
@@ -262,7 +296,12 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
 
   section(
     "File operations",
-    row("Confirm before acting", "Ask before Copy (5), Move (6) and Move to Trash (8)", confirmOpsSw)
+    row("Confirm before acting", "Ask before Copy (5), Move (6) and Move to Trash (8)", confirmOpsSw),
+    row(
+      "Show progress after",
+      "Quick operations finish without the progress dialog appearing at all",
+      delaySeg
+    )
   );
 
   const kbBtn = el("button", "linkbtn");
@@ -316,6 +355,8 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     setSwitch(foldersTopSw, s.foldersOnTop);
     setSwitch(linkedSortSw, s.linkedSort);
     setSwitch(confirmOpsSw, s.confirmOps);
+    for (const [n, b] of delayBtns) b.classList.toggle("on", s.progressDelayMs === n);
+    for (const [m, b] of findBtns) b.classList.toggle("on", s.findMatch === m);
     for (const [val, b] of caseBtns) b.classList.toggle("on", s.nameCase === val);
     for (const [val, b] of sepBtns) b.classList.toggle("on", s.pathSep === val);
     if (document.activeElement !== editorInput) editorInput.value = s.editorPath;

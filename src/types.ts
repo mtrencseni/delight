@@ -141,6 +141,12 @@ export interface Settings {
   linkedSort: boolean;
   /** Ask before copy / move / delete operations. */
   confirmOps: boolean;
+  /** Hold the file-operation progress dialog back this many ms, so quick ops
+      never flash it. 0 = show it immediately. */
+  progressDelayMs: number;
+  /** ⌘F quick-search: match names that START with the query, or contain it
+      anywhere. Prefix is the default — it's what typing a name usually means. */
+  findMatch: "prefix" | "anywhere";
   /** External editor launched by F4 (the Buffers executable). Empty ⇒ F4 asks to
       set it. Path to buffers.exe on Windows / the Buffers binary elsewhere. */
   editorPath: string;
