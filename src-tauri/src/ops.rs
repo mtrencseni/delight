@@ -312,26 +312,53 @@ fn extract_op(
     let index = archive::index_for(&archive)?;
     let mut res = OpResult::default();
 
-    // Plan first (member -> destination), so the progress total is exact.
+    // Plan first (member -> destination + metadata), so the progress total is
+    // exact and every directory exists before any file lands in it.
     let prefix = if inner.is_empty() { String::new() } else { format!("{inner}/") };
-    let mut plan: HashMap<String, PathBuf> = HashMap::new();
+    let rel_of = |p: &str| -> Option<PathBuf> {
+        let rel = p.strip_prefix(&prefix).unwrap_or(p);
+        let out = dest.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
+        // Inner paths are normalized at index time, so traversal is already
+        // impossible; re-check anyway — this is the one place we write.
+        out.starts_with(dest).then_some(out)
+    };
+
+    struct Planned {
+        out: PathBuf,
+        modified_ms: Option<i64>,
+        mode: Option<u32>,
+    }
+    let mut plan: HashMap<String, Planned> = HashMap::new();
+    let mut links: Vec<(PathBuf, String)> = Vec::new();
     let mut total = 0u64;
+
     for it in &items {
         if dest.join(&it.name).exists() && !overwrite {
             res.skipped.push(it.name.clone());
             continue;
         }
         let root = archive::normalize_inner(&format!("{inner}/{}", it.name));
+
+        // Directories first — including empty ones, which have no files to imply
+        // them and would otherwise be silently dropped.
+        for d in index.dirs_under(&root) {
+            if let Some(out) = rel_of(&d.path) {
+                fs::create_dir_all(&out).map_err(|e| friendly(&e))?;
+            }
+        }
         for m in index.files_under(&root) {
-            let rel = m.path.strip_prefix(&prefix).unwrap_or(&m.path);
-            let out = dest.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
-            // Inner paths are normalized at index time, so traversal is already
-            // impossible; re-check anyway — this is the one place we write.
-            if !out.starts_with(dest) {
-                continue;
+            let Some(out) = rel_of(&m.path) else { continue };
+            if m.is_link {
+                if let Some(t) = &m.link_target {
+                    links.push((out, t.clone()));
+                }
+                continue; // carries no data; materialized after the walk
             }
             total = total.saturating_add(m.size);
-            plan.insert(m.path.clone(), out);
+            plan.insert(
+                m.path.clone(),
+                Planned { out, modified_ms: m.modified_ms, mode: m.mode },
+            );
         }
         res.done.push(it.name.clone());
     }
@@ -339,11 +366,11 @@ fn extract_op(
     let mut ctx = Ctx::new(app, id, "bytes", total);
     let wanted: Vec<String> = plan.keys().cloned().collect();
     let outcome = archive::extract_members(&archive, &wanted, |member, reader| {
-        let Some(out) = plan.get(member) else { return Ok(()) };
-        if let Some(parent) = out.parent() {
+        let Some(p) = plan.get(member) else { return Ok(()) };
+        if let Some(parent) = p.out.parent() {
             fs::create_dir_all(parent).map_err(|e| friendly(&e))?;
         }
-        let mut f = fs::File::create(out).map_err(|e| friendly(&e))?;
+        let mut f = fs::File::create(&p.out).map_err(|e| friendly(&e))?;
         let mut buf = vec![0u8; 64 * 1024];
         loop {
             if ctx.cancelled() {
@@ -356,6 +383,8 @@ fn extract_op(
             f.write_all(&buf[..n]).map_err(|e| friendly(&e))?;
             ctx.advance(n as u64, member);
         }
+        drop(f); // close before stamping metadata
+        restore_meta(&p.out, p.modified_ms, p.mode);
         Ok(())
     });
     match outcome {
@@ -363,7 +392,64 @@ fn extract_op(
         Err(e) if e == CANCELLED => res.cancelled = true,
         Err(e) => return Err(e),
     }
+
+    // Links last, so their targets already exist.
+    for (out, target) in links {
+        if !materialize_link(&out, &target) {
+            res.skipped.push(out.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(target));
+        }
+    }
     Ok(res)
+}
+
+/// Put back the timestamp and permission bits the archive recorded, so a
+/// copied-out file isn't stamped "now" with default permissions.
+fn restore_meta(path: &Path, modified_ms: Option<i64>, mode: Option<u32>) {
+    if let Some(ms) = modified_ms {
+        let ft = filetime::FileTime::from_unix_time(ms.div_euclid(1000), (ms.rem_euclid(1000) * 1_000_000) as u32);
+        let _ = filetime::set_file_mtime(path, ft);
+    }
+    let Some(mode) = mode else { return };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode & 0o7777));
+    }
+    #[cfg(windows)]
+    {
+        // Windows has no mode bits; the one thing that maps is "not writable".
+        if mode & 0o200 == 0 {
+            if let Ok(m) = fs::metadata(path) {
+                let mut perms = m.permissions();
+                perms.set_readonly(true);
+                let _ = fs::set_permissions(path, perms);
+            }
+        }
+    }
+}
+
+/// Recreate a tar symlink/hardlink at `out`. Returns false when it can't be done
+/// (Windows symlinks need Developer Mode or admin), so the caller can report it
+/// as skipped rather than leaving a bogus empty file behind.
+fn materialize_link(out: &Path, target: &str) -> bool {
+    if let Some(parent) = out.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let resolved = out.parent().map(|p| p.join(target)).unwrap_or_else(|| PathBuf::from(target));
+    #[cfg(unix)]
+    {
+        let _ = fs::remove_file(out);
+        std::os::unix::fs::symlink(target, out).is_ok()
+    }
+    #[cfg(windows)]
+    {
+        // No symlink privilege in the general case: copy the target's contents
+        // when it's something we just extracted, otherwise report it as skipped.
+        if resolved.is_file() {
+            return fs::copy(&resolved, out).is_ok();
+        }
+        false
+    }
 }
 
 async fn run_op(
@@ -498,6 +584,46 @@ pub async fn create_folder(dir: String, name: String) -> Result<(), String> {
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+mod meta_tests {
+    use super::*;
+
+    /// A file copied out of an archive should carry the archive's timestamp, not
+    /// the moment it was extracted.
+    #[test]
+    fn restores_the_recorded_mtime() {
+        let p = std::env::temp_dir().join("delight-ops-test-mtime.txt");
+        fs::write(&p, b"x").unwrap();
+        let ms = 1_614_834_368_000i64; // 2021-03-04T05:06:08Z
+        restore_meta(&p, Some(ms), Some(0o644));
+        let got = fs::metadata(&p)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        assert_eq!(got, ms, "extracted file must keep the archive's timestamp");
+        let _ = fs::remove_file(&p);
+    }
+
+    /// The one mode bit that maps onto Windows is "not writable".
+    #[test]
+    fn read_only_mode_carries_over() {
+        let p = std::env::temp_dir().join("delight-ops-test-ro.txt");
+        let _ = fs::remove_file(&p);
+        fs::write(&p, b"x").unwrap();
+        restore_meta(&p, None, Some(0o444));
+        assert!(fs::metadata(&p).unwrap().permissions().readonly());
+        // Clear it again so the temp file can be removed.
+        let mut perms = fs::metadata(&p).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        let _ = fs::set_permissions(&p, perms);
+        let _ = fs::remove_file(&p);
+    }
 }
 
 #[tauri::command]

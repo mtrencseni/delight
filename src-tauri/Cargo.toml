@@ -32,7 +32,14 @@ fs2 = "0.4"
 # Read-only archive browsing (zip family). Pure Rust only — default features pull
 # in C-backed codecs (bzip2/lzma/zstd); "deflate" routes through flate2's
 # miniz_oxide backend, so there's no C toolchain dependency on any platform.
-zip = { version = "2", default-features = false, features = ["deflate"] }
+# "aes-crypto" is pure Rust (the `aes`/`sha1`/`hmac` crates), so encrypted zips
+# stay within the no-C-toolchain rule.
+zip = { version = "2", default-features = false, features = ["deflate", "aes-crypto"] }
+# 7z, pure Rust. Metadata can be read without decompressing, which keeps listing
+# cheap; AES-256 decryption comes from the same pure-Rust `aes` crate.
+sevenz-rust = { version = "0.6", features = ["aes256"] }
+# Restore each extracted file's modified time (std can't set it).
+filetime = "0.2"
 # tar + the compressors that wrap it. Every decoder here is pure Rust (flate2 on
 # its miniz_oxide backend), so no C toolchain is needed on any platform. These are
 # decode-only crates, which is all a read-only browser needs.

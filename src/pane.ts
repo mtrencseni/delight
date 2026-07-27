@@ -16,7 +16,14 @@ import {
   fetchThumbnail,
 } from "./sysicons";
 import { GRID_MAX, GRID_MIN, recordVisit, state } from "./state";
-import { displayPath, isArchiveName, parseDisplayPath } from "./archive";
+import {
+  archiveFileFor,
+  askArchivePassword,
+  displayPath,
+  isArchiveName,
+  needsPassword,
+  parseDisplayPath,
+} from "./archive";
 import { toast } from "./toast";
 
 const UP_ENTRY: Entry = {
@@ -680,7 +687,7 @@ export class PaneView {
   }
 
   /** Navigate to `path` (or `path`/`child`). Resolves true on success. */
-  async navigate(path: string, child?: string, focusName?: string): Promise<boolean> {
+  async navigate(path: string, child?: string, focusName?: string, retried = false): Promise<boolean> {
     try {
       const l = await invoke<Listing>("list_dir", { path, child: child ?? null });
       this.st.path = l.path;
@@ -700,6 +707,15 @@ export class PaneView {
       this.host.changed();
       return true;
     } catch (e) {
+      // An encrypted archive: ask once, then retry with the password in place.
+      if (!retried && needsPassword(e)) {
+        const file = archiveFileFor(path, child);
+        // Navigating is an explicit act, so ask even if a preview was declined.
+        if (file && (await askArchivePassword(file, true))) {
+          return this.navigate(path, child, focusName, true);
+        }
+        return false;
+      }
       this.showError(String(e));
       return false;
     }
@@ -833,9 +849,31 @@ export class PaneView {
 
   // ---- Finder-style disclosure (list only) -----------------------------------
 
+  /** Read a file for any of the previews. Inside an encrypted archive the first
+      read comes back asking for a password; prompt once and retry, so previewing
+      works the same either side of the boundary. */
+  private readPreviewText(dirPath: string, name: string) {
+    const args = { dir: dirPath, name, maxBytes: state.settings.codePreviewBytes };
+    type Res = { text: string; truncated: boolean; binary: boolean };
+    return invoke<Res>("read_text_file", args).catch(async (e) => {
+      if (!needsPassword(e)) throw e;
+      const file = archiveFileFor(dirPath);
+      if (!file || !(await askArchivePassword(file))) throw e;
+      return invoke<Res>("read_text_file", args);
+    });
+  }
+
+  /** What the disclosure triangle applies to: folders, plus archive *files*,
+      which expand into their contents just like a folder. A directory that
+      merely ends in ".zip" stays an ordinary folder. */
+  private canExpand(en: Entry): boolean {
+    if (en === UP_ENTRY) return false;
+    return en.isDir ? !this.isLaunchable(en) : isArchiveName(en.name);
+  }
+
   private async toggleExpand(i: number): Promise<void> {
     const row = this.view[i];
-    if (!row || row.entry === UP_ENTRY || !row.entry.isDir || this.isLaunchable(row.entry)) return;
+    if (!row || !this.canExpand(row.entry)) return;
     const st = this.expandState.get(row.key);
     if (st) {
       st.open = !st.open;
@@ -861,7 +899,7 @@ export class PaneView {
       return;
     }
     const row = this.view[this.st.cursor];
-    if (!row || row.entry === UP_ENTRY || !row.entry.isDir || this.isLaunchable(row.entry)) return;
+    if (!row || !this.canExpand(row.entry)) return;
     if (this.expandState.get(row.key)?.open) {
       const next = this.view[this.st.cursor + 1];
       if (next && next.depth > row.depth) this.setCursor(this.st.cursor + 1);
@@ -880,7 +918,7 @@ export class PaneView {
     }
     const row = this.view[this.st.cursor];
     if (!row || row.entry === UP_ENTRY) return;
-    if (row.entry.isDir && this.expandState.get(row.key)?.open) {
+    if (this.canExpand(row.entry) && this.expandState.get(row.key)?.open) {
       void this.toggleExpand(this.st.cursor);
       return;
     }
@@ -1021,7 +1059,7 @@ export class PaneView {
       const walk = (listing: Listing, depth: number) => {
         for (const en of listing.entries.filter((e) => show || !e.hidden).sort(cmp)) {
           const key = `${listing.path} ${en.name}`;
-          const ex = en.isDir ? this.expandState.get(key) : undefined;
+          const ex = this.canExpand(en) ? this.expandState.get(key) : undefined;
           const open = !!ex?.open;
           rows.push({ entry: en, depth, dirPath: listing.path, key, open });
           if (open && ex) walk(ex.listing, depth + 1);
@@ -1436,7 +1474,7 @@ export class PaneView {
     if (depth > 0) name.style.paddingLeft = `${0.25 + depth}rem`;
 
     const disc = div("disclose");
-    if (disclosure && en !== UP_ENTRY && en.isDir && !this.isLaunchable(en)) {
+    if (disclosure && this.canExpand(en)) {
       disc.classList.add("can");
       if (open) disc.classList.add("open");
       disc.innerHTML = icons.chevron;
@@ -1688,11 +1726,7 @@ export class PaneView {
     else host.append(this.cardPreview.dom);
     this.cardPreview.setDoc("", lang);
     thumb.append(host);
-    void invoke<{ text: string; truncated: boolean; binary: boolean }>("read_text_file", {
-      dir: dirPath,
-      name: en.name,
-      maxBytes: state.settings.codePreviewBytes,
-    })
+    void this.readPreviewText(dirPath, en.name)
       .then((res) => {
         if (this.chipKey !== key || !this.cardPreview) return; // cursor moved on
         if (res.binary) {
@@ -2038,6 +2072,12 @@ export class PaneView {
     );
     // The webview's own HTML5 drag would fight the native session — cancel it.
     e.preventDefault();
+    // Nothing inside an archive exists on disk, so there's no real path to hand
+    // the OS. Dragging out would pass a phantom path; copy-out (F5) is the way.
+    if (this.isReadOnly()) {
+      toast("Copy it out first (F5)");
+      return;
+    }
     if (!isTauri || paths.length === 0) return;
     void startDrag({ item: paths, icon: this.dragImage(paths.length) }).catch(() => {});
   }
@@ -2219,11 +2259,7 @@ export class PaneView {
     this.el.classList.add("previewing", "code-preview");
     this.codePreviewActive = true;
 
-    void invoke<{ text: string; truncated: boolean; binary: boolean }>("read_text_file", {
-      dir: dirPath,
-      name: entry.name,
-      maxBytes: state.settings.codePreviewBytes,
-    })
+    void this.readPreviewText(dirPath, entry.name)
       .then((res) => {
         if (this.previewKey !== key || !this.codePreview) return;
         // Binary/undecodable → fall back to the normal thumbnail preview.
@@ -2244,11 +2280,7 @@ export class PaneView {
   /** A file with no thumbnail preview: if it decodes as text, open it in the
       code preview (Buffers); if it's binary, keep the icon stage already shown. */
   private tryCodeFallback(entry: Entry, dirPath: string, key: string): void {
-    void invoke<{ text: string; truncated: boolean; binary: boolean }>("read_text_file", {
-      dir: dirPath,
-      name: entry.name,
-      maxBytes: state.settings.codePreviewBytes,
-    })
+    void this.readPreviewText(dirPath, entry.name)
       .then((res) => {
         if (this.previewKey !== key || res.binary) return;
         const host = div("edhost cmprev");

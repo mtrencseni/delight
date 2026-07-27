@@ -70,6 +70,10 @@ interface PromptOpts {
   confirmLabel?: string;
   /** Pre-select the name without its extension (Finder-style rename). */
   selectStem?: boolean;
+  /** Mask the input (archive passwords). */
+  password?: boolean;
+  /** Extra line under the title, e.g. which archive is being unlocked. */
+  message?: string;
   /** Return an error string to block confirmation, or null when valid. */
   validate?: (value: string) => string | null;
 }
@@ -86,7 +90,7 @@ export function promptDialog(opts: PromptOpts): Promise<string | null> {
 
     const input = document.createElement("input");
     input.className = "modal-input";
-    input.type = "text";
+    input.type = opts.password ? "password" : "text";
     input.value = opts.value ?? "";
     if (opts.placeholder) input.placeholder = opts.placeholder;
 
@@ -103,7 +107,14 @@ export function promptDialog(opts: PromptOpts): Promise<string | null> {
     ok.textContent = opts.confirmLabel ?? "OK";
     row.append(cancel, ok);
 
-    box.append(title, input, err, row);
+    if (opts.message) {
+      const msg = document.createElement("div");
+      msg.className = "modal-msg";
+      msg.textContent = opts.message;
+      box.append(title, msg, input, err, row);
+    } else {
+      box.append(title, input, err, row);
+    }
     o.append(box);
     document.body.append(o);
 

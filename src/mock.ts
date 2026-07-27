@@ -1,4 +1,4 @@
-import { archiveSplit, isArchiveName, MARK } from "./archive";
+import { archiveSplit, isArchiveName, MARK, NEEDS_PASSWORD } from "./archive";
 
 // In-browser mock of the Rust commands, used only when running outside Tauri
 // (plain `vite dev` in a browser). Lets the UI be developed and tested without
@@ -51,6 +51,7 @@ const root: MNode = d({
         "music.mp3": f(8203411, 30),
         "clip.mp4": f(52034110, 4),
         "backup.zip": f(9204411, 15),
+        "secret.zip": f(4096, 2),
         "app.py": f(4102, 1),
         "setup.sh": f(1204, 6),
       }),
@@ -207,6 +208,15 @@ const ARCHIVE_CONTENT: Record<string, number | null> = {
   "src/deep/notes.md": 800,
 };
 
+// Any archive whose name contains "secret" behaves like an encrypted one: it
+// lists fine (names are in the clear) but reads fail until a password is set.
+// Lets the password prompt + retry be exercised in the browser harness.
+const mockPasswords = new Set<string>();
+
+function isLockedArchive(archivePath: string): boolean {
+  return /secret/i.test(archivePath) && !mockPasswords.has(archivePath);
+}
+
 function archiveDirs(): Set<string> {
   const dirs = new Set<string>();
   for (const [p, size] of Object.entries(ARCHIVE_CONTENT)) {
@@ -320,6 +330,8 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
 
     case "read_text_file": {
       const name = String(args?.name ?? "");
+      const asplit = archiveSplit(String(args?.dir ?? ""));
+      if (asplit && isLockedArchive(asplit[0])) throw NEEDS_PASSWORD;
       const ext = name.split(".").pop()?.toLowerCase() ?? "";
       const maxBytes = Number(args?.maxBytes) || 10 * 1024;
       const BINARY = ["png","jpg","jpeg","gif","webp","bmp","heic","pdf","zip","gz","tar","tgz","bin","exe","dll","so","dylib","o","a","class","jar","mp3","mp4","mov","wav","dmg","xlsx","docx","ico","icns"];
@@ -341,6 +353,7 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
           // Copy-out of an archive: synthesize the extracted file/folder.
           const asplit = archiveSplit(it.dir);
           if (asplit) {
+            if (isLockedArchive(asplit[0])) throw NEEDS_PASSWORD;
             if (isMove) { skipped.push(it.name); continue; }
             const root = [asplit[1], it.name].filter(Boolean).join("/");
             const dirs = archiveDirs();
@@ -367,6 +380,15 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
       return { done, skipped, cancelled: false } as T;
     }
     case "cancel_op":
+      return undefined as T;
+    // The real backend is authoritative here; the mock just echoes the frontend
+    // defaults so setArchiveFormats is exercised on the same code path.
+    case "archive_formats":
+      return { zipExts: [], suffixes: [] } as T;
+    case "set_archive_password":
+      // Mirror the backend: only a working password is accepted/stored.
+      if (String(args?.password ?? "") !== "hunter2") throw "Wrong password";
+      mockPasswords.add(String(args?.path ?? ""));
       return undefined as T;
     case "rename_entry": {
       const rec = dirRecord(String(args?.dir ?? ""));

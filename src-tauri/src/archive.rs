@@ -45,12 +45,14 @@ pub enum Codec {
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Format {
     Zip,
+    SevenZ,
     Tar(Codec),
     Single(Codec),
 }
 
 /// Matched longest-first, so `.tar.gz` is a compressed tar rather than a bare gzip.
 const SUFFIXES: &[(&str, Format)] = &[
+    (".7z", Format::SevenZ),
     (".tar.gz", Format::Tar(Codec::Gzip)),
     (".tar.bz2", Format::Tar(Codec::Bzip2)),
     (".tar.xz", Format::Tar(Codec::Xz)),
@@ -85,6 +87,24 @@ pub fn is_archive_name(name: &str) -> bool {
 fn format_for(archive: &Path) -> Result<Format, String> {
     let name = archive.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     format_of(&name).ok_or_else(|| "Not a supported archive".to_string())
+}
+
+/// The recognized formats, handed to the frontend at startup so the two sides
+/// can't drift — this list is the single source of truth for what's enterable.
+/// (The frontend ships the same defaults so the browser mock still works.)
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Formats {
+    zip_exts: Vec<String>,
+    suffixes: Vec<String>,
+}
+
+#[tauri::command]
+pub fn archive_formats() -> Formats {
+    Formats {
+        zip_exts: ZIP_EXTS.iter().map(|s| s.to_string()).collect(),
+        suffixes: SUFFIXES.iter().map(|(s, _)| s.to_string()).collect(),
+    }
 }
 
 /// Normalize an inner (in-archive) path: `/`-separated, no leading or trailing
@@ -154,6 +174,14 @@ pub struct Member {
     /// Uncompressed size (0 for directories).
     pub size: u64,
     pub modified_ms: Option<i64>,
+    /// A tar symlink/hardlink entry: it carries no data, only a target.
+    pub is_link: bool,
+    /// Where a link points (archive-relative for hardlinks, arbitrary for symlinks).
+    pub link_target: Option<String>,
+    /// Unix mode bits, when the format records them — restored on copy-out.
+    pub mode: Option<u32>,
+    /// True when reading this member needs a password.
+    pub encrypted: bool,
 }
 
 pub struct Index {
@@ -184,6 +212,117 @@ impl Index {
     pub fn size_under(&self, inner: &str) -> u64 {
         self.files_under(inner).iter().map(|m| m.size).sum()
     }
+
+    /// Directories at or under `inner` — copy-out recreates these explicitly so
+    /// an empty folder inside the archive still appears at the destination.
+    pub fn dirs_under(&self, inner: &str) -> Vec<&Member> {
+        let prefix = format!("{inner}/");
+        self.members
+            .iter()
+            .filter(|m| m.is_dir && (m.path == inner || inner.is_empty() || m.path.starts_with(&prefix)))
+            .collect()
+    }
+}
+
+// ---- passwords ---------------------------------------------------------------
+
+/// Sentinel error meaning "this archive is encrypted and I don't have a working
+/// password". The frontend recognizes it, prompts, and retries.
+pub const NEEDS_PASSWORD: &str = "__password_required";
+
+/// Passwords the user has supplied this session, per archive. Memory only —
+/// never persisted, and gone when the app exits.
+fn passwords() -> &'static Mutex<HashMap<PathBuf, String>> {
+    static P: OnceLock<Mutex<HashMap<PathBuf, String>>> = OnceLock::new();
+    P.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn password_for(archive: &Path) -> Option<String> {
+    passwords().lock().ok()?.get(archive).cloned()
+}
+
+fn forget_password(archive: &Path) {
+    if let Ok(mut p) = passwords().lock() {
+        p.remove(archive);
+    }
+}
+
+/// Does `password` actually decrypt this archive? Checked before storing, so a
+/// wrong guess is never cached — otherwise every later read would fail as "wrong
+/// password" and the user would never be asked again.
+fn password_works(archive: &Path, password: &str) -> bool {
+    let mut probe = [0u8; 64];
+    match format_for(archive) {
+        Ok(Format::Zip) => {
+            let Ok(file) = File::open(archive) else { return false };
+            let Ok(mut za) = zip::ZipArchive::new(file) else { return false };
+            // The first encrypted member is enough to tell.
+            let mut idx = None;
+            for i in 0..za.len() {
+                if let Ok(f) = za.by_index_raw(i) {
+                    if !f.is_dir() && f.encrypted() {
+                        idx = Some(i);
+                        break;
+                    }
+                }
+            }
+            let Some(i) = idx else { return true }; // nothing encrypted to check
+            // Bound to a local so the borrow of `za` ends with this statement.
+            let ok = match za.by_index_decrypt(i, password.as_bytes()) {
+                // AES carries a password verifier, so a bad guess fails here; for
+                // legacy ZipCrypto it's the read that catches it.
+                Ok(mut f) => f.read(&mut probe).is_ok(),
+                Err(_) => false,
+            };
+            ok
+        }
+        Ok(Format::SevenZ) => {
+            let Ok(mut file) = File::open(archive) else { return false };
+            let Ok(len) = file.metadata().map(|m| m.len()) else { return false };
+            let pw = sevenz_rust::Password::from(password);
+            if sevenz_rust::Archive::read(&mut file, len, pw.as_slice()).is_err() {
+                return false;
+            }
+            // Headers can be readable while the data is still encrypted, so
+            // actually decode the first file.
+            match sevenz_rust::SevenZReader::open(archive, sevenz_rust::Password::from(password)) {
+                Ok(mut r) => {
+                    let mut ok = true;
+                    let _ = r.for_each_entries(|e, reader| {
+                        if e.is_directory() {
+                            return Ok(true);
+                        }
+                        ok = reader.read(&mut probe).is_ok();
+                        Ok(false) // one entry is enough
+                    });
+                    ok
+                }
+                Err(_) => false,
+            }
+        }
+        _ => true, // formats we don't decrypt
+    }
+}
+
+/// Remember a password for `path`, but only after checking it works. Errors when
+/// it doesn't, so the UI asks again instead of caching a dud.
+#[tauri::command]
+pub fn set_archive_password(path: String, password: String) -> Result<(), String> {
+    let archive = match Loc::parse(&path) {
+        Loc::Archive { archive, .. } => archive,
+        Loc::Local(p) => p,
+    };
+    if !password_works(&archive, &password) {
+        return Err("Wrong password".into());
+    }
+    if let Ok(mut p) = passwords().lock() {
+        p.insert(archive.clone(), password);
+    }
+    // The cached index may be the failed/partial one; force a rebuild.
+    if let Ok(mut c) = cache().lock() {
+        c.retain(|(k, _)| k.0 != archive);
+    }
+    Ok(())
 }
 
 // ---- index cache -------------------------------------------------------------
@@ -341,6 +480,10 @@ fn member_of(path: String, is_dir: bool, size: u64, modified_ms: Option<i64>) ->
         is_dir,
         size: if is_dir { 0 } else { size },
         modified_ms,
+        is_link: false,
+        link_target: None,
+        mode: None,
+        encrypted: false,
         path,
     }
 }
@@ -365,9 +508,98 @@ fn finish_index(mut by_path: HashMap<String, Member>) -> Index {
 fn build_index(archive: &Path) -> Result<Index, String> {
     match format_for(archive)? {
         Format::Zip => build_zip(archive),
+        Format::SevenZ => build_7z(archive),
         Format::Tar(c) => build_tar(archive, c),
         Format::Single(c) => build_single(archive, c),
     }
+}
+
+// ---- 7z ----------------------------------------------------------------------
+
+/// 7z stores its file table separately from the data, so listing only reads the
+/// header — no decompression. When the header itself is encrypted, even that
+/// needs the password, which is why this can return NEEDS_PASSWORD.
+fn sevenz_password(archive: &Path) -> sevenz_rust::Password {
+    sevenz_rust::Password::from(password_for(archive).unwrap_or_default().as_str())
+}
+
+fn friendly_7z(e: &sevenz_rust::Error, archive: &Path) -> String {
+    let msg = e.to_string();
+    let looks_encrypted = matches!(e, sevenz_rust::Error::PasswordRequired)
+        || msg.to_lowercase().contains("password")
+        || (msg.to_lowercase().contains("checksum") && password_for(archive).is_none());
+    if looks_encrypted {
+        return NEEDS_PASSWORD.into();
+    }
+    // A wrong password usually surfaces as a corrupt-data error.
+    if password_for(archive).is_some() && msg.to_lowercase().contains("maybe wrong password") {
+        return "Wrong password".into();
+    }
+    format!("Can’t read 7z archive: {msg}")
+}
+
+fn build_7z(archive: &Path) -> Result<Index, String> {
+    let mut file = File::open(archive).map_err(|_| "Can’t open archive".to_string())?;
+    let len = file.metadata().map_err(|e| e.to_string())?.len();
+    let pw = sevenz_password(archive);
+    let arch = sevenz_rust::Archive::read(&mut file, len, pw.as_slice())
+        .map_err(|e| friendly_7z(&e, archive))?;
+
+    let mut by_path: HashMap<String, Member> = HashMap::new();
+    for f in &arch.files {
+        let path = normalize_inner(&f.name);
+        if path.is_empty() {
+            continue;
+        }
+        let mut m = member_of(path, f.is_directory, f.size, sevenz_time_ms(f));
+        m.encrypted = !f.has_stream && !f.is_directory;
+        by_path.insert(m.path.clone(), m);
+    }
+    Ok(finish_index(by_path))
+}
+
+/// 7z timestamps are Windows FILETIME (100 ns ticks since 1601).
+fn sevenz_time_ms(f: &sevenz_rust::SevenZArchiveEntry) -> Option<i64> {
+    if !f.has_last_modified_date {
+        return None;
+    }
+    const TICKS_PER_MS: i64 = 10_000;
+    const EPOCH_DIFF_MS: i64 = 11_644_473_600_000; // 1601-01-01 -> 1970-01-01
+    let ticks: u64 = f.last_modified_date.into();
+    Some(ticks as i64 / TICKS_PER_MS - EPOCH_DIFF_MS)
+}
+
+/// Walk a 7z once, handing every wanted member to `sink`.
+fn sevenz_walk(
+    archive: &Path,
+    mut want: impl FnMut(&str) -> bool,
+    mut sink: impl FnMut(&str, &mut dyn Read) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut r = sevenz_rust::SevenZReader::open(archive, sevenz_password(archive))
+        .map_err(|e| friendly_7z(&e, archive))?;
+    // The sink's error has to survive the crate's own error type, so it rides
+    // out in a captured slot rather than through for_each_entries.
+    let mut failed: Option<String> = None;
+    let res = r.for_each_entries(|entry, reader| {
+        if entry.is_directory() {
+            return Ok(true);
+        }
+        let path = normalize_inner(entry.name());
+        if !want(&path) {
+            return Ok(true);
+        }
+        match sink(&path, reader) {
+            Ok(()) => Ok(true),
+            Err(e) => {
+                failed = Some(e);
+                Ok(false) // stop the walk
+            }
+        }
+    });
+    if let Some(e) = failed {
+        return Err(e);
+    }
+    res.map(|_| ()).map_err(|e| friendly_7z(&e, archive))
 }
 
 // ---- tar ---------------------------------------------------------------------
@@ -385,7 +617,20 @@ fn build_tar(archive: &Path, codec: Codec) -> Result<Index, String> {
         let h = entry.header();
         let is_dir = h.entry_type().is_dir() || p.to_string_lossy().ends_with('/');
         let modified_ms = h.mtime().ok().map(|s| s as i64 * 1000);
-        by_path.insert(path.clone(), member_of(path, is_dir, h.size().unwrap_or(0), modified_ms));
+        let mut m = member_of(path, is_dir, h.size().unwrap_or(0), modified_ms);
+        m.mode = h.mode().ok();
+        // Symlinks and hardlinks carry no data — only a target — so they need
+        // recreating rather than copying, or they'd land as empty files.
+        let et = h.entry_type();
+        if et.is_symlink() || et.is_hard_link() {
+            m.is_link = true;
+            m.link_target = entry
+                .link_name()
+                .ok()
+                .flatten()
+                .map(|l| l.to_string_lossy().into_owned());
+        }
+        by_path.insert(m.path.clone(), m);
     }
     Ok(finish_index(by_path))
 }
@@ -497,14 +742,18 @@ fn build_zip(archive: &Path) -> Result<Index, String> {
 
     let mut by_path: HashMap<String, Member> = HashMap::new();
     for i in 0..za.len() {
-        let Ok(f) = za.by_index(i) else { continue };
+        // Raw: metadata comes from the central directory, so encrypted members
+        // still list (only their *contents* need the password).
+        let Ok(f) = za.by_index_raw(i) else { continue };
         // mangled_name/normalize_inner both neutralize traversal; we keep the
         // normalized form as the member's identity everywhere downstream.
         let path = normalize_inner(f.name());
         if path.is_empty() {
             continue;
         }
-        let member = member_of(path, f.is_dir(), f.size(), zip_time_ms(f.last_modified()));
+        let mut member = member_of(path, f.is_dir(), f.size(), zip_time_ms(f.last_modified()));
+        member.mode = f.unix_mode();
+        member.encrypted = f.encrypted();
         by_path.insert(member.path.clone(), member);
     }
     Ok(finish_index(by_path))
@@ -515,9 +764,28 @@ fn friendly_zip(e: &zip::result::ZipError) -> String {
     match e {
         ZipError::FileNotFound => "Not found in the archive".into(),
         ZipError::InvalidArchive(_) => "Not a readable archive".into(),
+        ZipError::UnsupportedArchive(ZipError::PASSWORD_REQUIRED) => NEEDS_PASSWORD.into(),
         ZipError::UnsupportedArchive(m) => format!("Unsupported archive: {m}"),
+        ZipError::InvalidPassword => "Wrong password".into(),
         _ => e.to_string(),
     }
+}
+
+/// Same as `friendly_zip`, but maps "this entry is encrypted" to the sentinel so
+/// the UI knows to ask for a password rather than just reporting a failure.
+fn zip_read_err(e: &zip::result::ZipError) -> String {
+    friendly_zip(e)
+}
+
+/// A read that used a stored password failed. Passwords are verified before
+/// being stored, so this means the archive changed underneath us — drop it and
+/// ask again rather than failing forever with a password we can't clear.
+fn zip_decrypt_err(archive: &Path, e: &zip::result::ZipError) -> String {
+    if matches!(e, zip::result::ZipError::InvalidPassword) {
+        forget_password(archive);
+        return NEEDS_PASSWORD.into();
+    }
+    friendly_zip(e)
 }
 
 // ---- listing -----------------------------------------------------------------
@@ -597,8 +865,30 @@ pub fn read_member(archive: &Path, inner: &str, max_bytes: usize) -> Result<(Vec
         Format::Zip => {
             let file = File::open(archive).map_err(|_| "Can’t open archive".to_string())?;
             let mut za = zip::ZipArchive::new(file).map_err(|e| friendly_zip(&e))?;
-            let mut f = za.by_name(inner).map_err(|e| friendly_zip(&e))?;
-            take_capped(&mut f, cap)
+            match password_for(archive) {
+                Some(pw) => {
+                    let mut f = za
+                        .by_name_decrypt(inner, pw.as_bytes())
+                        .map_err(|e| zip_decrypt_err(archive, &e))?;
+                    take_capped(&mut f, cap)
+                }
+                None => {
+                    let mut f = za.by_name(inner).map_err(|e| zip_read_err(&e))?;
+                    take_capped(&mut f, cap)
+                }
+            }
+        }
+        Format::SevenZ => {
+            let found = std::cell::RefCell::new(None);
+            sevenz_walk(
+                archive,
+                |p| found.borrow().is_none() && p == inner,
+                |_, r| {
+                    *found.borrow_mut() = Some(take_capped(r, cap)?);
+                    Ok(())
+                },
+            )?;
+            found.into_inner().ok_or_else(|| "Not found in the archive".to_string())
         }
         // Streaming formats can't seek to a member, so the stream is walked until
         // the wanted one shows up, then abandoned.
@@ -639,22 +929,31 @@ pub fn extract_members(
         Format::Zip => {
             let file = File::open(archive).map_err(|_| "Can’t open archive".to_string())?;
             let mut za = zip::ZipArchive::new(file).map_err(|e| friendly_zip(&e))?;
+            let pw = password_for(archive);
             for i in 0..za.len() {
-                let mut f = match za.by_index(i) {
-                    Ok(f) => f,
-                    Err(_) => continue,
+                // Names come from the central directory, so this is cheap and
+                // doesn't need the password.
+                let path = match za.by_index_raw(i) {
+                    Ok(f) if !f.is_dir() => normalize_inner(f.name()),
+                    _ => continue,
                 };
-                if f.is_dir() {
-                    continue;
-                }
-                let path = normalize_inner(f.name());
                 if !wanted.iter().any(|w| *w == path) {
                     continue;
                 }
-                sink(&path, &mut f)?;
+                match &pw {
+                    Some(p) => {
+                        let mut f = za.by_index_decrypt(i, p.as_bytes()).map_err(|e| zip_decrypt_err(archive, &e))?;
+                        sink(&path, &mut f)?;
+                    }
+                    None => {
+                        let mut f = za.by_index(i).map_err(|e| zip_read_err(&e))?;
+                        sink(&path, &mut f)?;
+                    }
+                }
             }
             Ok(())
         }
+        Format::SevenZ => sevenz_walk(archive, |p| wanted.iter().any(|w| w == p), sink),
         // One pass for the whole selection: a .tar.gz is decompressed once no
         // matter how many members were picked.
         Format::Tar(c) => tar_walk(archive, c, |p| wanted.iter().any(|w| w == p), sink),
@@ -958,6 +1257,216 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A minimal zstd frame carrying `payload` as a single raw (stored) block.
+    /// Our zstd crate decodes only, so a real encoder isn't available — this
+    /// hand-built frame is enough to prove the decoder is wired up correctly.
+    fn zstd_frame(payload: &[u8]) -> Vec<u8> {
+        let mut v = vec![0x28, 0xB5, 0x2F, 0xFD]; // magic
+        v.push(0x20); // frame header: single segment, content size follows as u8
+        v.push(payload.len() as u8);
+        // Block header: 3 little-endian bits -> last=1, type=Raw(0), size<<3.
+        let h = 1u32 | (0u32 << 1) | ((payload.len() as u32) << 3);
+        v.extend_from_slice(&h.to_le_bytes()[..3]);
+        v.extend_from_slice(payload);
+        v
+    }
+
+    #[test]
+    fn bare_zstd_decodes() {
+        let body = b"zstd single stream";
+        let dir = std::env::temp_dir().join("delight-archive-test-zstd");
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("payload.txt.zst");
+        std::fs::write(&p, zstd_frame(body)).unwrap();
+
+        let root = list(&p, "").unwrap();
+        assert_eq!(root.entries.len(), 1);
+        assert_eq!(root.entries[0].name, "payload.txt");
+        // zstd has no length field we read cheaply, so this came from measuring
+        // the decoded stream — which also proves the decoder ran.
+        assert_eq!(root.entries[0].size, body.len() as u64);
+
+        let (bytes, _) = read_member(&p, "payload.txt", 4096).unwrap();
+        assert_eq!(bytes, body);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn detects_7z_and_reads_it() {
+        // sevenz-rust can write, so this fixture is a genuine 7z container.
+        assert_eq!(format_of("bundle.7z"), Some(Format::SevenZ));
+        let dir = std::env::temp_dir().join("delight-archive-test-7zsrc");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sub/deep")).unwrap();
+        std::fs::write(dir.join("readme.txt"), b"hello").unwrap();
+        std::fs::write(dir.join("sub/a.txt"), b"aaaa").unwrap();
+        std::fs::write(dir.join("sub/deep/b.txt"), b"bbbbbb").unwrap();
+        let p = std::env::temp_dir().join("delight-archive-test.7z");
+        let _ = std::fs::remove_file(&p);
+        sevenz_rust::compress_to_path(&dir, &p).unwrap();
+
+        let root = list(&p, "").unwrap();
+        let mut names: Vec<&str> = root.entries.iter().map(|e| e.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["readme.txt", "sub"]);
+        assert!(root.read_only);
+
+        let sub = list(&p, "sub").unwrap();
+        let mut s: Vec<&str> = sub.entries.iter().map(|e| e.name.as_str()).collect();
+        s.sort();
+        assert_eq!(s, vec!["a.txt", "deep"]);
+
+        let (bytes, _) = read_member(&p, "sub/deep/b.txt", 4096).unwrap();
+        assert_eq!(bytes, b"bbbbbb");
+        assert_eq!(index_for(&p).unwrap().size_under("sub"), 10);
+
+        // Extraction visits each requested member once.
+        let mut seen: Vec<(String, usize)> = Vec::new();
+        extract_members(&p, &["readme.txt".into(), "sub/a.txt".into()], |n, r| {
+            let mut b = Vec::new();
+            r.read_to_end(&mut b).unwrap();
+            seen.push((n.to_string(), b.len()));
+            Ok(())
+        })
+        .unwrap();
+        seen.sort();
+        assert_eq!(seen, vec![("readme.txt".to_string(), 5), ("sub/a.txt".to_string(), 4)]);
+
+        let _ = std::fs::remove_file(&p);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Empty directories have no files to imply them, so copy-out has to learn
+    /// about them from the index or they vanish.
+    #[test]
+    fn index_reports_empty_directories() {
+        let p = std::env::temp_dir().join("delight-archive-test-emptydir.zip");
+        {
+            let f = File::create(&p).unwrap();
+            let mut w = zip::ZipWriter::new(f);
+            let opts = SimpleFileOptions::default();
+            w.add_directory("empty", opts).unwrap();
+            w.add_directory("holder/alsoempty", opts).unwrap();
+            w.start_file("holder/x.txt", opts).unwrap();
+            w.write_all(b"x").unwrap();
+            w.finish().unwrap();
+        }
+        let ix = index_for(&p).unwrap();
+        let mut dirs: Vec<&str> = ix.dirs_under("").iter().map(|m| m.path.as_str()).collect();
+        dirs.sort();
+        assert_eq!(dirs, vec!["empty", "holder", "holder/alsoempty"]);
+        // No files under "empty" — only dirs_under knows it exists.
+        assert!(ix.files_under("empty").is_empty());
+        let _ = std::fs::remove_file(&p);
+    }
+
+    /// Timestamps and mode bits are captured so copy-out can put them back.
+    #[test]
+    fn captures_mode_and_mtime() {
+        let p = std::env::temp_dir().join("delight-archive-test-meta.zip");
+        {
+            let f = File::create(&p).unwrap();
+            let mut w = zip::ZipWriter::new(f);
+            let opts = SimpleFileOptions::default()
+                .unix_permissions(0o640)
+                .last_modified_time(zip::DateTime::from_date_and_time(2021, 3, 4, 5, 6, 8).unwrap());
+            w.start_file("stamped.txt", opts).unwrap();
+            w.write_all(b"x").unwrap();
+            w.finish().unwrap();
+        }
+        let ix = index_for(&p).unwrap();
+        let m = ix.members.iter().find(|m| m.path == "stamped.txt").unwrap();
+        assert_eq!(m.mode.map(|x| x & 0o777), Some(0o640));
+        // 2021-03-04T05:06:08Z
+        assert_eq!(m.modified_ms, Some(1_614_834_368_000));
+        assert!(!m.encrypted);
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn tar_links_are_flagged_not_treated_as_empty_files() {
+        let mut buf = Vec::new();
+        {
+            let mut w = tar::Builder::new(&mut buf);
+            let mut h = tar::Header::new_gnu();
+            h.set_size(5);
+            h.set_mode(0o644);
+            h.set_cksum();
+            w.append_data(&mut h, "real.txt", &b"hello"[..]).unwrap();
+
+            let mut lh = tar::Header::new_gnu();
+            lh.set_size(0);
+            lh.set_entry_type(tar::EntryType::Symlink);
+            lh.set_mode(0o777);
+            w.append_link(&mut lh, "link.txt", "real.txt").unwrap();
+            w.finish().unwrap();
+        }
+        let p = std::env::temp_dir().join("delight-archive-test-links.tar");
+        std::fs::write(&p, buf).unwrap();
+
+        let ix = index_for(&p).unwrap();
+        let link = ix.members.iter().find(|m| m.path == "link.txt").unwrap();
+        assert!(link.is_link, "symlink entry must be flagged");
+        assert_eq!(link.link_target.as_deref(), Some("real.txt"));
+        let real = ix.members.iter().find(|m| m.path == "real.txt").unwrap();
+        assert!(!real.is_link);
+        let _ = std::fs::remove_file(&p);
+    }
+
+    /// An encrypted zip still lists (names live in the clear central directory);
+    /// only reading needs the password, which is why the prompt can arrive after
+    /// the user is already browsing.
+    #[test]
+    fn encrypted_zip_reports_then_reads_with_a_password() {
+        let p = std::env::temp_dir().join("delight-archive-test-encrypted.zip");
+        {
+            let f = File::create(&p).unwrap();
+            let mut w = zip::ZipWriter::new(f);
+            let opts = SimpleFileOptions::default()
+                .with_aes_encryption(zip::AesMode::Aes256, "hunter2");
+            w.start_file("secret.txt", opts).unwrap();
+            w.write_all(b"classified").unwrap();
+            w.finish().unwrap();
+        }
+
+        let root = list(&p, "").unwrap();
+        assert_eq!(root.entries.len(), 1);
+        assert_eq!(root.entries[0].name, "secret.txt");
+        assert!(
+            index_for(&p).unwrap().members[0].encrypted,
+            "the index should know the member is encrypted"
+        );
+
+        // No password yet: the caller gets the sentinel, not a raw zip error.
+        assert_eq!(read_member(&p, "secret.txt", 4096).unwrap_err(), NEEDS_PASSWORD);
+
+        // A wrong password is rejected and NOT cached — otherwise every later
+        // read would fail as "wrong password" with no way to be asked again.
+        assert_eq!(
+            set_archive_password(p.to_string_lossy().into_owned(), "wrong".into()),
+            Err("Wrong password".to_string())
+        );
+        assert_eq!(
+            read_member(&p, "secret.txt", 4096).unwrap_err(),
+            NEEDS_PASSWORD,
+            "after a wrong guess the archive must still ask, not stay stuck"
+        );
+
+        set_archive_password(p.to_string_lossy().into_owned(), "hunter2".into()).unwrap();
+        let (bytes, _) = read_member(&p, "secret.txt", 4096).unwrap();
+        assert_eq!(bytes, b"classified");
+
+        // And copy-out works through the same password.
+        let mut out = Vec::new();
+        extract_members(&p, &["secret.txt".to_string()], |_, r| {
+            r.read_to_end(&mut out).unwrap();
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(out, b"classified");
+        let _ = std::fs::remove_file(&p);
+    }
+
     #[test]
     fn index_is_cached_until_the_archive_changes() {
         let p = fixture("cache");
@@ -979,3 +1488,4 @@ mod tests {
         let _ = std::fs::remove_file(&p);
     }
 }
+

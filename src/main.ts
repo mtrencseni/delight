@@ -11,6 +11,7 @@ import { applyTheme, effectiveTheme, onThemeChange } from "./theme";
 import { toast } from "./toast";
 import { confirmDialog, promptDialog } from "./dialog";
 import { ProgressHandle, type OpProgress } from "./progress";
+import { archiveFileFor, askArchivePassword, inArchive, needsPassword, setArchiveFormats } from "./archive";
 import { icons } from "./icons";
 import { buildSettingsPage, type SettingsPage } from "./settingsPage";
 import { buildKeybindingsPage, type KeybindingsPage } from "./keybindingsPage";
@@ -63,11 +64,14 @@ class App {
   private commandHandlers: Record<CommandId, () => boolean | void> = {} as any;
 
   async init(): Promise<void> {
-    const [saved, home] = await Promise.all([
+    const [saved, home, formats] = await Promise.all([
       invoke<any>("load_state").catch(() => null),
       invoke<string>("home_dir").catch(() => "/"),
+      // The backend owns the archive format list; adopt it so the two can't drift.
+      invoke<{ zipExts: string[]; suffixes: string[] }>("archive_formats").catch(() => null),
     ]);
     this.home = home;
+    if (formats) setArchiveFormats(formats);
     this.restoreSettings(saved);
     document.documentElement.dataset.nameCase = state.settings.nameCase; // .pathinput / .locname case
     state.keybindings = mergeKeybindings(saved?.keybindings);
@@ -995,7 +999,12 @@ class App {
   /** Run a mutating backend op (copy/move/trash) behind a progress dialog that the
       user can send to the background or cancel. Resolves with the OpResult, or null
       if it errored (already toasted). */
-  private async runWithProgress(title: string, cmd: string, args: Record<string, unknown>): Promise<OpResult | null> {
+  private async runWithProgress(
+    title: string,
+    cmd: string,
+    args: Record<string, unknown>,
+    retried = false
+  ): Promise<OpResult | null> {
     const id =
       typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `op-${Date.now()}-${Math.random()}`;
     const handle = new ProgressHandle({
@@ -1006,6 +1015,20 @@ class App {
     try {
       return await invoke<OpResult>(cmd, { id, ...args });
     } catch (e) {
+      // An encrypted zip lists fine but fails on read, so the prompt can land
+      // here rather than at navigation time.
+      if (!retried && needsPassword(e)) {
+        // Close the progress dialog FIRST: it sits above the modal layer, so a
+        // prompt raised underneath it would be invisible and unclickable.
+        this.ops.delete(id);
+        handle.close();
+        const first = (args.items as { dir: string }[] | undefined)?.[0]?.dir ?? "";
+        const file = archiveFileFor(first);
+        if (file && (await askArchivePassword(file, true))) {
+          return this.runWithProgress(title, cmd, args, true);
+        }
+        return null;
+      }
       toast(String(e));
       return null;
     } finally {
@@ -1181,6 +1204,12 @@ class App {
   }
 
   private addFavorite(path: string, name: string): void {
+    // A location inside an archive isn't bookmarkable: it only exists while that
+    // archive does, and the saved path would carry the internal boundary marker.
+    if (inArchive(path)) {
+      toast("Can’t bookmark a location inside an archive");
+      return;
+    }
     if (state.locations.some((l) => l.path === path)) return;
     state.locations.push({ path, name });
     persist();

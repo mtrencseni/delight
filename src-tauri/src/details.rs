@@ -5,6 +5,7 @@
 // The QuickLook (macOS) and Shell (Windows) thumbnail paths both encode a PNG.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::icons::to_data_uri;
+use crate::archive::{self, Loc};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -49,10 +50,81 @@ fn split_ext(name: &str, is_dir: bool) -> Option<String> {
 
 #[tauri::command]
 pub async fn item_details(dir: String, name: Option<String>) -> Result<Details, String> {
+    // Inside an archive there is nothing on disk to stat, so the same details are
+    // assembled from the index instead.
+    if let Loc::Archive { archive, inner } = Loc::parse(&dir) {
+        let inner = match &name {
+            Some(n) => archive::normalize_inner(&format!("{inner}/{n}")),
+            None => inner,
+        };
+        return tauri::async_runtime::spawn_blocking(move || archive_details(&archive, &inner))
+            .await
+            .map_err(|e| e.to_string());
+    }
     let p = join(dir, name);
     tauri::async_runtime::spawn_blocking(move || gather(&p))
         .await
         .map_err(|e| e.to_string())
+}
+
+/// `ls -l`-style string from raw mode bits (archives give us a number, not a
+/// Metadata, so `fs_cmds::perm_string` doesn't apply).
+fn mode_string(mode: u32, is_dir: bool, is_link: bool) -> String {
+    let t = if is_link {
+        'l'
+    } else if is_dir {
+        'd'
+    } else {
+        '-'
+    };
+    let bit = |shift: u32, ch: char| if mode & (1 << shift) != 0 { ch } else { '-' };
+    [
+        t,
+        bit(8, 'r'), bit(7, 'w'), bit(6, 'x'),
+        bit(5, 'r'), bit(4, 'w'), bit(3, 'x'),
+        bit(2, 'r'), bit(1, 'w'), bit(0, 'x'),
+    ]
+    .iter()
+    .collect()
+}
+
+/// Details for something inside an archive. Mirrors `gather`'s shape (dirs-first
+/// children, capped at 9) so the chips view looks the same either side of the
+/// boundary. Creation time, owner and default-app don't exist here.
+fn archive_details(archive: &Path, inner: &str) -> Details {
+    let mut d = Details::default();
+    let Ok(index) = archive::index_for(archive) else {
+        return d;
+    };
+    let me = index.members.iter().find(|m| m.path == inner);
+    if let Some(m) = me {
+        d.permissions = m.mode.map(|mode| mode_string(mode, m.is_dir, m.is_link));
+    }
+    // The archive root is a directory even though it has no member of its own.
+    let is_dir = me.map(|m| m.is_dir).unwrap_or_else(|| inner.is_empty());
+    if !is_dir {
+        return d;
+    }
+    let mut all: Vec<ChildEntry> = index
+        .children(inner)
+        .into_iter()
+        .filter(|m| !m.name.starts_with('.'))
+        .map(|m| ChildEntry {
+            name: m.name.clone(),
+            is_dir: m.is_dir,
+            is_symlink: m.is_link,
+            ext: split_ext(&m.name, m.is_dir),
+        })
+        .collect();
+    all.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    });
+    d.dir_count = Some(all.len() as u64);
+    all.truncate(9);
+    d.children = all;
+    d
 }
 
 fn gather(p: &PathBuf) -> Details {
