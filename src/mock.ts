@@ -381,6 +381,27 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
     }
     case "cancel_op":
       return undefined as T;
+    case "create_archive": {
+      const destRec = dirRecord(String(args?.dest ?? ""));
+      const items = (args?.items ?? []) as { dir: string; name: string }[];
+      if (!destRec) throw "Destination is not a folder";
+      if (!items.length) throw "Nothing to pack";
+      // Same dedupe rule as the backend: name.zip, name-1.zip, …
+      const stem = String(args?.name ?? "archive");
+      let created = `${stem}.zip`;
+      for (let i = 1; destRec[created]; i++) created = `${stem}-${i}.zip`;
+      let bytes = 0;
+      const done: string[] = [];
+      for (const it of items) {
+        const rec = dirRecord(it.dir);
+        const node = rec?.[it.name];
+        if (!node) continue;
+        bytes += node.size ?? 1024;
+        done.push(it.name);
+      }
+      destRec[created] = f(Math.max(1, Math.round(bytes / 2)), 0);
+      return { done, skipped: [], cancelled: false, created } as T;
+    }
     // The real backend is authoritative here; the mock just echoes the frontend
     // defaults so setArchiveFormats is exercised on the same code path.
     case "archive_formats":

@@ -59,7 +59,9 @@ export type CommandId =
   | "favoritesRight"
   | "drivesLeft"
   | "drivesRight"
-  | "enterArchive";
+  | "enterArchive"
+  | "pack"
+  | "unpack";
 
 export interface Command {
   id: CommandId;
@@ -109,6 +111,8 @@ export const COMMANDS: Command[] = [
   { id: "rename", label: "Rename", group: "File operations", defaults: isMac ? ["Shift+Digit6"] : ["Shift+F6"] },
   { id: "newFolder", label: "New folder", group: "File operations", defaults: isMac ? ["Digit7"] : ["F7"] },
   { id: "trash", label: "Move to Trash", group: "File operations", defaults: isMac ? ["Digit8"] : ["F8"] },
+  { id: "pack", label: "Pack into zip", group: "File operations", defaults: isMac ? ["Alt+Digit5"] : ["Alt+F5"] },
+  { id: "unpack", label: "Unpack archive", group: "File operations", defaults: isMac ? ["Alt+Digit9"] : ["Alt+F9"] },
 
   // Selection
   // Insert marks the current item and steps down (Total Commander). On Mac

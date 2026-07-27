@@ -47,6 +47,7 @@ pub fn run() {
             ops::create_folder,
             ops::trash_entries,
             ops::cancel_op,
+            ops::create_archive,
             archive::archive_formats,
             archive::set_archive_password,
             icons::file_icon,

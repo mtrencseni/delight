@@ -11,7 +11,7 @@ import { applyTheme, effectiveTheme, onThemeChange } from "./theme";
 import { toast } from "./toast";
 import { confirmDialog, promptDialog } from "./dialog";
 import { ProgressHandle, type OpProgress } from "./progress";
-import { archiveFileFor, askArchivePassword, inArchive, needsPassword, setArchiveFormats } from "./archive";
+import { archiveFileFor, askArchivePassword, inArchive, isArchiveName, MARK, needsPassword, setArchiveFormats } from "./archive";
 import { icons } from "./icons";
 import { buildSettingsPage, type SettingsPage } from "./settingsPage";
 import { buildKeybindingsPage, type KeybindingsPage } from "./keybindingsPage";
@@ -22,6 +22,8 @@ interface OpResult {
   done: string[];
   skipped: string[];
   cancelled: boolean;
+  /** Pack only: the archive that was created, so the cursor can land on it. */
+  created?: string;
 }
 
 interface TabView {
@@ -228,6 +230,8 @@ class App {
       drivesLeft: () => this.openDrives(0),
       drivesRight: () => this.openDrives(1),
       enterArchive: () => this.activePane()?.enterArchive(),
+      pack: () => void this.doPack(),
+      unpack: () => void this.doUnpack(),
     };
     this.rebuildComboMap();
     initKeyboard({
@@ -250,6 +254,9 @@ class App {
         requestAnimationFrame(() => void invoke("show_main_window").catch(() => {}))
       );
     }
+
+    // Browser-only test hook (the preview harness drives the app through this).
+    if (!isTauri) (window as any).__delight = this;
   }
 
   private restoreSettings(saved: any): void {
@@ -1035,6 +1042,119 @@ class App {
       this.ops.delete(id);
       handle.close();
     }
+  }
+
+  /** Alt+F5: pack the selection into a zip. Two panes → it lands in the other
+      pane; single pane → beside the selection. Name defaults to the item (one
+      selected) or the current folder (several), deduped as name-1, name-2… */
+  private async doPack(): Promise<void> {
+    const src = this.activePane();
+    if (!src) return;
+    if (src.isReadOnly()) {
+      toast("Can’t pack from inside an archive");
+      return;
+    }
+    const items = src.selectedItems(); // marked items, else the cursor; never ".."
+    if (!items.length) return;
+    const tab = state.tabs[state.activeTab];
+    const dst = tab?.single ? src : this.otherPane() ?? src;
+    if (dst.isReadOnly()) {
+      toast("Can’t pack into an archive");
+      return;
+    }
+    const destDir = dst.currentPath();
+    const name =
+      items.length === 1 ? items[0].name.replace(/\.[^.]+$/, "") || items[0].name : baseName(src.currentPath());
+
+    const res = await this.runWithProgress("Packing", "create_archive", {
+      items: items.map(({ dir, name: n }) => ({ dir, name: n })),
+      dest: destDir,
+      name,
+    });
+    if (!res) return;
+    await Promise.all([src.softReload(), dst.softReload()]);
+    if (res.cancelled) {
+      toast("Cancelled — no archive created");
+    } else {
+      toast(`Packed ${this.plural(res.done.length, "item")} into ${res.created ?? name + ".zip"}`);
+      if (res.created) dst.selectByName(res.created);
+    }
+  }
+
+  /** Alt+F9: unpack the selected archive(s). Two panes → into the other pane;
+      single pane → into a new folder beside the archive (aaa.zip → aaa, then
+      aaa-1, aaa-2 if taken). */
+  private async doUnpack(): Promise<void> {
+    const src = this.activePane();
+    if (!src) return;
+    const archives = src.selectedItems().filter((it) => !it.isDir && isArchiveName(it.name));
+    if (!archives.length) {
+      toast("Not an archive");
+      return;
+    }
+    const tab = state.tabs[state.activeTab];
+    const other = tab?.single ? null : this.otherPane();
+    if (other?.isReadOnly()) {
+      toast("Can’t unpack into an archive");
+      return;
+    }
+
+    let unpacked = 0;
+    for (const a of archives) {
+      const archivePath = this.childPath(a.dir, a.name);
+      let destDir: string;
+      if (other) {
+        destDir = other.currentPath();
+      } else {
+        // No second pane: make a folder next to the archive, named after it.
+        const stem = a.name.replace(/\.[^.]+$/, "") || a.name;
+        let folder = stem;
+        for (let i = 1; src.hasEntry(folder); i++) folder = `${stem}-${i}`;
+        try {
+          await invoke("create_folder", { dir: a.dir, name: folder });
+        } catch (e) {
+          toast(String(e));
+          return;
+        }
+        destDir = this.childPath(a.dir, folder);
+      }
+
+      // Reuse copy-out: list the archive root, then copy everything in it. That
+      // inherits progress, cancel, passwords and metadata restore for free.
+      let entries: { name: string }[];
+      try {
+        const root = await invoke<{ entries: { name: string }[] }>("list_dir", {
+          path: archivePath + MARK,
+          child: null,
+        });
+        entries = root.entries;
+      } catch (e) {
+        toast(String(e));
+        return;
+      }
+      const res = await this.runWithProgress("Unpacking", "copy_entries", {
+        items: entries.map((e) => ({ dir: archivePath + MARK, name: e.name })),
+        dest: destDir,
+        overwrite: false,
+      });
+      if (!res) return;
+      if (res.cancelled) {
+        toast("Cancelled");
+        break;
+      }
+      unpacked++;
+    }
+    await this.reloadTabPanes();
+    if (unpacked) toast(`Unpacked ${this.plural(unpacked, "archive")}`);
+  }
+
+  /** Re-list both panes of the current tab. Pack/unpack can write into either
+      one (or into a folder the other pane is showing), so refreshing just the
+      pane we think we targeted leaves a stale view behind. */
+  private async reloadTabPanes(): Promise<void> {
+    const panes = this.views.get(state.tabs[state.activeTab]?.id ?? -1)?.panes;
+    if (!panes) return;
+    await Promise.all(panes.map((p) => p.softReload()));
   }
 
   /** F4: open the cursor file in the external editor (Buffers). */
