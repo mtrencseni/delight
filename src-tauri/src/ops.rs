@@ -8,6 +8,7 @@
 // that can be sent to the background. Progress is byte-based for copy/move and
 // item-based for trash. Cross-platform: pure std::fs + the `trash` crate.
 
+use crate::archive::{self, Loc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -290,6 +291,81 @@ pub async fn move_entries(
     run_op(app, id, items, dest, overwrite, true).await
 }
 
+/// Sentinel a sink returns to unwind out of a single-pass extraction on cancel.
+const CANCELLED: &str = "\u{0}cancelled";
+
+/// Copy-out from an archive — the only way bytes ever leave one. Every wanted
+/// member is streamed straight to its destination in a single pass over the
+/// archive; nothing is staged in a temp file.
+fn extract_op(
+    app: AppHandle,
+    id: String,
+    items: Vec<Item>,
+    dest: &Path,
+    overwrite: bool,
+) -> Result<OpResult, String> {
+    use std::io::Write;
+
+    let Some(Loc::Archive { archive, inner }) = items.first().map(|it| Loc::parse(&it.dir)) else {
+        return Err("Not an archive".into());
+    };
+    let index = archive::index_for(&archive)?;
+    let mut res = OpResult::default();
+
+    // Plan first (member -> destination), so the progress total is exact.
+    let prefix = if inner.is_empty() { String::new() } else { format!("{inner}/") };
+    let mut plan: HashMap<String, PathBuf> = HashMap::new();
+    let mut total = 0u64;
+    for it in &items {
+        if dest.join(&it.name).exists() && !overwrite {
+            res.skipped.push(it.name.clone());
+            continue;
+        }
+        let root = archive::normalize_inner(&format!("{inner}/{}", it.name));
+        for m in index.files_under(&root) {
+            let rel = m.path.strip_prefix(&prefix).unwrap_or(&m.path);
+            let out = dest.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
+            // Inner paths are normalized at index time, so traversal is already
+            // impossible; re-check anyway — this is the one place we write.
+            if !out.starts_with(dest) {
+                continue;
+            }
+            total = total.saturating_add(m.size);
+            plan.insert(m.path.clone(), out);
+        }
+        res.done.push(it.name.clone());
+    }
+
+    let mut ctx = Ctx::new(app, id, "bytes", total);
+    let wanted: Vec<String> = plan.keys().cloned().collect();
+    let outcome = archive::extract_members(&archive, &wanted, |member, reader| {
+        let Some(out) = plan.get(member) else { return Ok(()) };
+        if let Some(parent) = out.parent() {
+            fs::create_dir_all(parent).map_err(|e| friendly(&e))?;
+        }
+        let mut f = fs::File::create(out).map_err(|e| friendly(&e))?;
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            if ctx.cancelled() {
+                return Err(CANCELLED.to_string());
+            }
+            let n = reader.read(&mut buf).map_err(|e| friendly(&e))?;
+            if n == 0 {
+                break;
+            }
+            f.write_all(&buf[..n]).map_err(|e| friendly(&e))?;
+            ctx.advance(n as u64, member);
+        }
+        Ok(())
+    });
+    match outcome {
+        Ok(()) => {}
+        Err(e) if e == CANCELLED => res.cancelled = true,
+        Err(e) => return Err(e),
+    }
+    Ok(res)
+}
+
 async fn run_op(
     app: AppHandle,
     id: String,
@@ -299,6 +375,17 @@ async fn run_op(
     is_move: bool,
 ) -> Result<OpResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        // Archives are strictly read-only: never a destination, and copy-out only.
+        if Loc::parse(&dest).is_archive() {
+            return Err("Can’t write into an archive".into());
+        }
+        if items.first().is_some_and(|it| Loc::parse(&it.dir).is_archive()) {
+            if is_move {
+                return Err("Can’t move out of an archive — copy it instead".into());
+            }
+            return extract_op(app, id, items, Path::new(&dest), overwrite);
+        }
+
         let dest_dir = Path::new(&dest);
         if !dest_dir.is_dir() {
             return Err("Destination is not a folder".into());
@@ -375,6 +462,9 @@ async fn run_op(
 #[tauri::command]
 pub async fn rename_entry(dir: String, name: String, new_name: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        if Loc::parse(&dir).is_archive() {
+            return Err("Can’t rename inside an archive".into());
+        }
         valid_name(&new_name)?;
         let target = new_name.trim();
         if target == name {
@@ -395,6 +485,9 @@ pub async fn rename_entry(dir: String, name: String, new_name: String) -> Result
 #[tauri::command]
 pub async fn create_folder(dir: String, name: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        if Loc::parse(&dir).is_archive() {
+            return Err("Can’t create a folder inside an archive".into());
+        }
         valid_name(&name)?;
         let target = Path::new(&dir).join(name.trim());
         if target.symlink_metadata().is_ok() {
@@ -410,6 +503,9 @@ pub async fn create_folder(dir: String, name: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn trash_entries(app: AppHandle, id: String, items: Vec<Item>) -> Result<OpResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        if items.first().is_some_and(|it| Loc::parse(&it.dir).is_archive()) {
+            return Err("Can’t delete inside an archive".into());
+        }
         let paths: Vec<(String, PathBuf)> = items
             .iter()
             .map(|it| (it.name.clone(), it.path()))

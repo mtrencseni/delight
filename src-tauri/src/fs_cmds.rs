@@ -1,3 +1,4 @@
+use crate::archive::{self, Loc};
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -7,16 +8,16 @@ use tauri::Manager;
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Entry {
-    name: String,
-    stem: String,
-    ext: Option<String>,
-    is_dir: bool,
-    is_symlink: bool,
-    size: u64,
-    modified_ms: Option<i64>,
-    created_ms: Option<i64>,
-    permissions: Option<String>,
-    hidden: bool,
+    pub(crate) name: String,
+    pub(crate) stem: String,
+    pub(crate) ext: Option<String>,
+    pub(crate) is_dir: bool,
+    pub(crate) is_symlink: bool,
+    pub(crate) size: u64,
+    pub(crate) modified_ms: Option<i64>,
+    pub(crate) created_ms: Option<i64>,
+    pub(crate) permissions: Option<String>,
+    pub(crate) hidden: bool,
 }
 
 /// `ls -l`-style type + rwx string, e.g. "drwxr-xr-x" or "-rw-r--r--".
@@ -53,10 +54,13 @@ pub fn perm_string(meta: &std::fs::Metadata, is_symlink: bool) -> Option<String>
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Listing {
-    path: String,
-    name: String,
-    parent: Option<String>,
-    entries: Vec<Entry>,
+    pub(crate) path: String,
+    pub(crate) name: String,
+    pub(crate) parent: Option<String>,
+    pub(crate) entries: Vec<Entry>,
+    /// True inside an archive: the UI greys out rename/move/delete/new-folder and
+    /// only offers copy-out.
+    pub(crate) read_only: bool,
 }
 
 fn friendly_io(e: &std::io::Error) -> String {
@@ -165,7 +169,30 @@ fn read_listing(path: String, child: Option<String>, home: Option<PathBuf>) -> R
         name,
         parent,
         entries,
+        read_only: false,
     })
+}
+
+/// Resolve `path` (+ optional `child`) to a location, entering an archive when
+/// the child is one — that's what makes ⌘/Ctrl+Enter on a `.zip` descend into it.
+fn resolve(path: &str, child: Option<String>) -> Loc {
+    match (Loc::parse(path), child) {
+        // Inside an archive, a child is just another inner path component.
+        (Loc::Archive { archive, inner }, child) => {
+            let inner = match child {
+                Some(c) => archive::normalize_inner(&format!("{inner}/{c}")),
+                None => inner,
+            };
+            Loc::Archive { archive, inner }
+        }
+        // On disk: descending into an archive *file* crosses the boundary. A
+        // directory that merely ends in ".zip" is still just a directory.
+        (Loc::Local(p), Some(c)) if archive::is_archive_name(&c) && p.join(&c).is_file() => {
+            Loc::Archive { archive: p.join(c), inner: String::new() }
+        }
+        (Loc::Local(p), Some(c)) => Loc::Local(p.join(c)),
+        (Loc::Local(p), None) => Loc::Local(p),
+    }
 }
 
 #[tauri::command]
@@ -175,9 +202,18 @@ pub async fn list_dir(
     child: Option<String>,
 ) -> Result<Listing, String> {
     let home = app.path().home_dir().ok();
-    tauri::async_runtime::spawn_blocking(move || read_listing(path, child, home))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || match resolve(&path, child.clone()) {
+        Loc::Archive { archive, inner } if archive.is_file() => archive::list(&archive, &inner),
+        // A path that looks archive-ish but isn't a file (e.g. a folder literally
+        // named "foo.zip") browses as an ordinary directory.
+        Loc::Archive { archive, inner } => {
+            let joined = archive.join(inner.replace('/', std::path::MAIN_SEPARATOR_STR));
+            read_listing(joined.to_string_lossy().into_owned(), None, home)
+        }
+        Loc::Local(_) => read_listing(path, child, home),
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -193,7 +229,13 @@ pub fn home_dir(app: tauri::AppHandle) -> Result<String, String> {
 /// folder changes on disk). Read-only stat; None if the dir is gone/unreadable.
 #[tauri::command]
 pub fn dir_mtime(path: String) -> Option<u64> {
-    std::fs::metadata(&path)
+    // Inside an archive the archive file's own mtime is the answer: its contents
+    // can't change without the file changing.
+    let target = match Loc::parse(&path) {
+        Loc::Archive { archive, .. } => archive,
+        Loc::Local(p) => p,
+    };
+    std::fs::metadata(&target)
         .ok()?
         .modified()
         .ok()?
@@ -209,6 +251,21 @@ pub fn dir_mtime(path: String) -> Option<u64> {
 /// notice in-place edits. Read-only; None if the dir is gone/unreadable.
 #[tauri::command]
 pub fn dir_signature(path: String) -> Option<u64> {
+    // An archive's contents are immutable while the file is unchanged, so the
+    // watcher's poll costs a single stat here instead of stat-ing every entry.
+    if let Loc::Archive { archive, inner } = Loc::parse(&path) {
+        let (mtime, size) = archive::stamp(&archive).ok()?;
+        let mut h: u64 = 0xcbf29ce484222325;
+        for v in [mtime, size] {
+            h ^= v;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        for b in inner.bytes() {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x100000001b3);
+        }
+        return Some(h);
+    }
     let rd = fs::read_dir(&path).ok()?;
     let mut acc: u64 = 0;
     let mut count: u64 = 0;
@@ -266,19 +323,31 @@ pub struct TextFile {
 pub async fn read_text_file(dir: String, name: String, max_bytes: usize) -> Result<TextFile, String> {
     tauri::async_runtime::spawn_blocking(move || {
         use std::io::Read;
-        let path = Path::new(&dir).join(&name);
-        let file = fs::File::open(&path).map_err(|e| friendly_io(&e))?;
-        let len = file.metadata().map(|m| m.len()).unwrap_or(0);
         let cap = max_bytes.max(1);
-        let mut buf = Vec::with_capacity(cap.min(len as usize + 1).max(1));
-        // +1 byte over the cap so we can tell "exactly max" from "longer than max".
-        file.take(cap as u64 + 1)
-            .read_to_end(&mut buf)
-            .map_err(|e| friendly_io(&e))?;
-        let truncated = buf.len() > cap;
+        // Inside an archive the member is decompressed straight into memory —
+        // the preview works without ever writing a temp file.
+        let (mut buf, mut truncated) = match Loc::parse(&dir) {
+            Loc::Archive { archive, inner } => {
+                let member = archive::normalize_inner(&format!("{inner}/{name}"));
+                archive::read_member(&archive, &member, cap)?
+            }
+            Loc::Local(d) => {
+                let path = d.join(&name);
+                let file = fs::File::open(&path).map_err(|e| friendly_io(&e))?;
+                let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+                let mut buf = Vec::with_capacity(cap.min(len as usize + 1).max(1));
+                // +1 byte over the cap so we can tell "exactly max" from "longer".
+                file.take(cap as u64 + 1)
+                    .read_to_end(&mut buf)
+                    .map_err(|e| friendly_io(&e))?;
+                let truncated = buf.len() > cap;
+                (buf, truncated)
+            }
+        };
         if truncated {
             buf.truncate(cap);
         }
+        truncated = truncated || buf.len() > cap;
         // A NUL byte in the sniffed prefix is the classic "this is binary" tell.
         if buf.contains(&0) {
             return Ok(TextFile { text: String::new(), truncated, binary: true });
@@ -311,6 +380,10 @@ pub struct DiskSpace {
 #[tauri::command]
 pub async fn disk_space(path: String) -> Option<DiskSpace> {
     tauri::async_runtime::spawn_blocking(move || {
+        // Meaningless inside an archive — the UI already handles None.
+        if Loc::parse(&path).is_archive() {
+            return None;
+        }
         let p = Path::new(&path);
         Some(DiskSpace {
             total: fs2::total_space(p).ok()?,
@@ -329,9 +402,15 @@ pub async fn disk_space(path: String) -> Option<DiskSpace> {
 /// can't trap the walk. Runs off the UI thread; can be slow for large trees.
 #[tauri::command]
 pub async fn dir_size(path: String) -> u64 {
-    tauri::async_runtime::spawn_blocking(move || walk_size(Path::new(&path)))
-        .await
-        .unwrap_or(0)
+    tauri::async_runtime::spawn_blocking(move || match Loc::parse(&path) {
+        // Free from the index — no walk, no decompression.
+        Loc::Archive { archive, inner } => archive::index_for(&archive)
+            .map(|ix| ix.size_under(&inner))
+            .unwrap_or(0),
+        Loc::Local(p) => walk_size(&p),
+    })
+    .await
+    .unwrap_or(0)
 }
 
 fn walk_size(dir: &Path) -> u64 {

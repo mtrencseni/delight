@@ -58,7 +58,8 @@ export type CommandId =
   | "favoritesLeft"
   | "favoritesRight"
   | "drivesLeft"
-  | "drivesRight";
+  | "drivesRight"
+  | "enterArchive";
 
 export interface Command {
   id: CommandId;
@@ -95,6 +96,9 @@ export const COMMANDS: Command[] = [
   { id: "cursorEnd", label: "Jump to bottom", group: "Panes & navigation", defaults: ["End", `${MOD}+ArrowDown`] },
   { id: "open", label: "Open", group: "Panes & navigation", defaults: ["Enter"] },
   { id: "up", label: "Go up a folder", group: "Panes & navigation", defaults: ["Backspace"] },
+  // Archives are entered explicitly, so plain Enter on a .docx/.apk still opens
+  // it in its app rather than showing the zip guts.
+  { id: "enterArchive", label: "Open archive as folder", group: "Panes & navigation", defaults: [`${MOD}+Enter`] },
 
   // File operations. Windows/Linux use the classic Norton Commander / Total
   // Commander F-keys (F4 edit … F8 delete); macOS uses the number row instead,

@@ -29,6 +29,18 @@ trash = "5"
 dunce = "1"
 # Cross-platform total/free disk space for a path (drive-root disk usage readout).
 fs2 = "0.4"
+# Read-only archive browsing (zip family). Pure Rust only — default features pull
+# in C-backed codecs (bzip2/lzma/zstd); "deflate" routes through flate2's
+# miniz_oxide backend, so there's no C toolchain dependency on any platform.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# tar + the compressors that wrap it. Every decoder here is pure Rust (flate2 on
+# its miniz_oxide backend), so no C toolchain is needed on any platform. These are
+# decode-only crates, which is all a read-only browser needs.
+tar = "0.4"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+bzip2-rs = "0.1"
+ruzstd = "0.7"
+lzma-rs = "0.3"
 
 # Owner name resolution (uid -> username) on Unix.
 [target.'cfg(unix)'.dependencies]

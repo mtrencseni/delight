@@ -1,4 +1,5 @@
 mod actions;
+mod archive;
 mod details;
 mod fs_cmds;
 mod icons;

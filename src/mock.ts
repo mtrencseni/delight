@@ -1,3 +1,5 @@
+import { archiveSplit, isArchiveName, MARK } from "./archive";
+
 // In-browser mock of the Rust commands, used only when running outside Tauri
 // (plain `vite dev` in a browser). Lets the UI be developed and tested without
 // the native shell. Mimics a macOS-like tree, including a 10k-entry dir, a
@@ -149,6 +151,13 @@ function listDir(pathIn: string, child?: string | null) {
   let raw = pathIn.trim();
   if (raw === "~") raw = HOME;
   else if (raw.startsWith("~" + SEP)) raw = HOME + raw.slice(1);
+
+  // Archive browsing: serve the synthetic contents so the UI can be exercised
+  // without a zip decoder in the browser.
+  const split = archiveSplit(raw);
+  if (split) return listArchive(split[0], child ? `${split[1]}/${child}` : split[1]);
+  if (child && isArchiveName(child)) return listArchive(raw === SEP ? SEP + child : raw + SEP + child, "");
+
   const segs = segments(raw);
   if (child) segs.push(child);
   const node = lookup(segs);
@@ -183,6 +192,67 @@ function listDir(pathIn: string, child?: string | null) {
     name: segs.length ? segs[segs.length - 1] : SEP,
     parent: segs.length ? (segs.length === 1 ? SEP : SEP + segs.slice(0, -1).join(SEP)) : null,
     entries,
+  };
+}
+
+// Contents served for any archive entered in the mock. `null` marks a directory;
+// "src/deep" is deliberately absent so the synthesized-parent path gets exercised
+// the same way the Rust side synthesizes missing zip directory entries.
+const ARCHIVE_CONTENT: Record<string, number | null> = {
+  "readme.txt": 240,
+  LICENSE: 1070,
+  src: null,
+  "src/main.ts": 3400,
+  "src/util.ts": 1200,
+  "src/deep/notes.md": 800,
+};
+
+function archiveDirs(): Set<string> {
+  const dirs = new Set<string>();
+  for (const [p, size] of Object.entries(ARCHIVE_CONTENT)) {
+    if (size === null) dirs.add(p);
+    for (let i = p.indexOf("/"); i >= 0; i = p.indexOf("/", i + 1)) dirs.add(p.slice(0, i));
+  }
+  return dirs;
+}
+
+function listArchive(archivePath: string, inner: string) {
+  const dir = inner.split("/").filter((s) => s && s !== ".").join("/");
+  const dirs = archiveDirs();
+  const seen = new Set<string>();
+  const entries = [];
+  for (const [p, size] of Object.entries(ARCHIVE_CONTENT)) {
+    // Walk each member's ancestors so synthesized directories show up too.
+    for (const cand of [p, ...[...dirs].filter((d) => p.startsWith(d + "/"))]) {
+      const parent = cand.includes("/") ? cand.slice(0, cand.lastIndexOf("/")) : "";
+      if (parent !== dir || seen.has(cand)) continue;
+      seen.add(cand);
+      const name = cand.slice(cand.lastIndexOf("/") + 1);
+      const isDir = dirs.has(cand);
+      const { stem, ext } = splitExt(name, isDir);
+      entries.push({
+        name,
+        stem,
+        ext,
+        isDir,
+        isSymlink: false,
+        size: isDir ? 0 : (ARCHIVE_CONTENT[cand] ?? 0),
+        modifiedMs: NOW - 20 * day,
+        createdMs: null,
+        permissions: null,
+        hidden: name.startsWith("."),
+      });
+    }
+  }
+  const parent = dir
+    ? archivePath + MARK + (dir.includes("/") ? dir.slice(0, dir.lastIndexOf("/")) : "")
+    : archivePath.slice(0, archivePath.lastIndexOf(SEP)) || SEP;
+  return {
+    path: archivePath + MARK + dir,
+    name: dir ? dir.slice(dir.lastIndexOf("/") + 1) : archivePath.slice(archivePath.lastIndexOf(SEP) + 1),
+    parent,
+    entries,
+    readOnly: true,
   };
 }
 
@@ -268,6 +338,16 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
       const skipped: string[] = [];
       if (destRec) {
         for (const it of (args?.items ?? []) as { dir: string; name: string }[]) {
+          // Copy-out of an archive: synthesize the extracted file/folder.
+          const asplit = archiveSplit(it.dir);
+          if (asplit) {
+            if (isMove) { skipped.push(it.name); continue; }
+            const root = [asplit[1], it.name].filter(Boolean).join("/");
+            const dirs = archiveDirs();
+            destRec[it.name] = dirs.has(root) ? d({}, 20) : f(ARCHIVE_CONTENT[root] ?? 0, 20);
+            done.push(it.name);
+            continue;
+          }
           const srcRec = dirRecord(it.dir);
           if (!srcRec || !srcRec[it.name]) continue;
           const sameDir = it.dir === dest;

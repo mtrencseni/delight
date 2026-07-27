@@ -20,6 +20,9 @@ export interface Listing {
   name: string;
   parent: string | null;
   entries: Entry[];
+  /** True inside an archive: only copy-out is allowed, everything that would
+      write (rename / move / delete / new folder) is refused. */
+  readOnly?: boolean;
 }
 
 export type SortKey = "name" | "ext" | "size" | "created" | "modified";

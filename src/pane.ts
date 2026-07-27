@@ -16,6 +16,8 @@ import {
   fetchThumbnail,
 } from "./sysicons";
 import { GRID_MAX, GRID_MIN, recordVisit, state } from "./state";
+import { displayPath, isArchiveName, parseDisplayPath } from "./archive";
+import { toast } from "./toast";
 
 const UP_ENTRY: Entry = {
   name: "..",
@@ -277,7 +279,8 @@ export class PaneView {
 
     this.pathInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
-        const v = toSystemSep(this.pathInput.value.trim(), state.settings.pathSep);
+        // Re-insert the archive marker if the typed path walks into one.
+        const v = parseDisplayPath(toSystemSep(this.pathInput.value.trim(), state.settings.pathSep));
         if (v) this.navigate(v).then((ok) => ok && this.pathInput.blur());
       } else if (e.key === "Escape") {
         this.resetPathInput();
@@ -623,14 +626,14 @@ export class PaneView {
   }
 
   private resetPathInput(): void {
-    this.pathInput.value = withSep(this.st.path, state.settings.pathSep);
+    this.pathInput.value = this.displayedPath(this.st.path);
     this.hideError();
   }
 
   /** Re-render just the path-bar text (after the path-separator setting changes). */
   refreshPathBar(): void {
     if (document.activeElement !== this.pathInput) {
-      this.pathInput.value = withSep(this.st.path, state.settings.pathSep);
+      this.pathInput.value = this.displayedPath(this.st.path);
     }
   }
 
@@ -685,7 +688,7 @@ export class PaneView {
       this.st.cursor = 0;
       recordVisit(l.path); // remember this folder for the "recent folders" highlight
       this.expandState.clear(); // disclosure state belongs to the old root
-      this.pathInput.value = withSep(l.path, state.settings.pathSep);
+      this.pathInput.value = this.displayedPath(l.path);
       this.updateDiskInfo();
       this.hideError();
       this.rebuild();
@@ -711,6 +714,28 @@ export class PaneView {
     this.openIndex(this.st.cursor);
   }
 
+  /** ⌘/Ctrl+Enter: enter the cursor's archive as if it were a folder. */
+  enterArchive(): void {
+    const r = this.view[this.st.cursor];
+    if (!r || r.entry === UP_ENTRY) return;
+    if (r.entry.isDir || !isArchiveName(r.entry.name)) {
+      toast("Not an archive");
+      return;
+    }
+    void this.navigate(r.dirPath, r.entry.name);
+  }
+
+  /** True when this pane is inside an archive (nothing here can be modified). */
+  isReadOnly(): boolean {
+    return !!this.st.listing?.readOnly;
+  }
+
+  /** A path as shown in the path bar: the archive marker becomes an ordinary
+      separator, then the usual slash-style setting is applied. */
+  private displayedPath(p: string): string {
+    return withSep(displayPath(p), state.settings.pathSep);
+  }
+
   /** A macOS `.app` bundle that should launch rather than be entered — only when
       the "Launch apps" setting is on. Off (Explore mode) → treat it as a folder. */
   private isLaunchable(en: Entry): boolean {
@@ -728,6 +753,12 @@ export class PaneView {
     if (row.entry === UP_ENTRY) return this.goUp();
     if (row.entry.isDir && !this.isLaunchable(row.entry)) {
       void this.navigate(row.dirPath, row.entry.name);
+      return;
+    }
+    // Nothing inside an archive exists on disk, so there's no file to hand to the
+    // OS. Copying it out (F5) is the way to open it.
+    if (this.isReadOnly()) {
+      toast("Copy it out first (F5)");
       return;
     }
     // Files (and launchable .app bundles): hand off to the OS default handler.

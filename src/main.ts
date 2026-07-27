@@ -223,6 +223,7 @@ class App {
       favoritesRight: () => this.openFavorites(1),
       drivesLeft: () => this.openDrives(0),
       drivesRight: () => this.openDrives(1),
+      enterArchive: () => this.activePane()?.enterArchive(),
     };
     this.rebuildComboMap();
     initKeyboard({
@@ -934,6 +935,16 @@ class App {
     const destDir = dst.currentPath();
     const verb = move ? "Move" : "Copy";
 
+    // Archives are read-only: copy-out is fine, everything else isn't.
+    if (dst.isReadOnly()) {
+      toast("Can’t write into an archive");
+      return;
+    }
+    if (move && src.isReadOnly()) {
+      toast("Can’t move out of an archive — copy it instead");
+      return;
+    }
+
     // Guard: don't put a folder inside itself or a descendant of itself.
     for (const it of items) {
       const p = this.childPath(it.dir, it.name);
@@ -1005,8 +1016,13 @@ class App {
 
   /** F4: open the cursor file in the external editor (Buffers). */
   private async doEdit(): Promise<void> {
-    const it = this.activePane()?.cursorItem();
+    const p = this.activePane();
+    const it = p?.cursorItem();
     if (!it) return;
+    if (p?.isReadOnly()) {
+      toast("Copy it out first (F5)");
+      return;
+    }
     if (it.isDir) {
       toast("Can’t edit a folder");
       return;
@@ -1027,6 +1043,10 @@ class App {
     const p = this.activePane();
     const it = p?.cursorItem();
     if (!p || !it) return;
+    if (p.isReadOnly()) {
+      toast("Can’t rename inside an archive");
+      return;
+    }
     const newName = await promptDialog({
       title: "Rename",
       value: it.name,
@@ -1073,6 +1093,10 @@ class App {
   private async doNewFolder(): Promise<void> {
     const p = this.activePane();
     if (!p) return;
+    if (p.isReadOnly()) {
+      toast("Can’t create a folder inside an archive");
+      return;
+    }
     const dir = p.currentPath();
     const name = await promptDialog({
       title: "New folder",
@@ -1101,6 +1125,10 @@ class App {
   private async doTrash(): Promise<void> {
     const p = this.activePane();
     if (!p) return;
+    if (p.isReadOnly()) {
+      toast("Can’t delete inside an archive");
+      return;
+    }
     const items = p.selectedItems();
     if (!items.length) return;
     if (state.settings.confirmOps) {
