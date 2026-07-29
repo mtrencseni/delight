@@ -69,7 +69,9 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: delight/pnpm-lock.yaml
+          cache-dependency-path: |
+            delight/pnpm-lock.yaml
+            Buffers/pnpm-lock.yaml
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -81,6 +83,14 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: delight
+        run: pnpm install --frozen-lockfile
+
+      # Buffers' own node_modules, not Delight's. The shims pull real source out
+      # of Buffers/src, and module resolution for those files walks up from
+      # Buffers/ — it never reaches delight/node_modules — so CodeMirror has to
+      # be installed on that side too or tsc can't resolve a single import.
+      - name: Install Buffers dependencies
+        working-directory: Buffers
         run: pnpm install --frozen-lockfile
 
       # --no-bundle skips the NSIS installer: we ship the standalone exe only.
