@@ -102,20 +102,29 @@ jobs:
         id: art
         shell: bash
         run: |
-          name="Delight-${{ steps.v.outputs.version }}-win_x64-portable.exe"
           src="delight/src-tauri/target/x86_64-pc-windows-msvc/release/delight.exe"
+          name="Delight-${{ steps.v.outputs.version }}-win_x64-portable.exe"
+          # A second, version-less copy. Release assets are addressable at
+          # /releases/latest/download/<file>, which only works if the file name
+          # is the same in every release — so the versioned copy is for
+          # archives, and this one is what README links to.
+          stable="Delight-win_x64-portable.exe"
           mkdir -p dist
           cp "$src" "dist/$name"
-          (cd dist && sha256sum "$name" > "$name.sha256")
+          cp "$src" "dist/$stable"
+          (cd dist && sha256sum "$name" > "$name.sha256" && sha256sum "$stable" > "$stable.sha256")
           echo "name=$name" >> "$GITHUB_OUTPUT"
           ls -l dist
 
-      # Always keep the build retrievable, tag or not.
+      # A copy attached to the run itself, so a dry run (which publishes no
+      # release) still leaves something downloadable. Short retention: this is a
+      # scratch copy, the release assets are the ones that are kept.
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.art.outputs.name }}
           path: dist/*
+          retention-days: 7
 
       - name: Publish release
         if: steps.v.outputs.release == 'true'

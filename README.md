@@ -10,6 +10,14 @@ look-alike).
 >
 > On **Windows** every **⌘** shortcut below is **Ctrl** (⌘T → Ctrl+T, etc.).
 
+## Download
+
+[**⬇ Windows (x64)**](https://github.com/mtrencseni/delight/releases/latest/download/Delight-win_x64-portable.exe)
+— no installer, just a single `.exe`. The link always points at the newest
+release.
+([checksum](https://github.com/mtrencseni/delight/releases/latest/download/Delight-win_x64-portable.exe.sha256)
+· [all releases](https://github.com/mtrencseni/delight/releases))
+
 ![Delight Commander](docs/screenshot.png)
 
 ## Features
