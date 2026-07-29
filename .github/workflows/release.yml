@@ -26,14 +26,14 @@ jobs:
 
     steps:
       - name: Check out Delight
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: delight
 
       # Must sit next to delight/ and be spelled "Buffers": the shims import
       # ../../Buffers/src/… relative to delight/src/.
       - name: Check out Buffers (shared editor + language registry)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: mtrencseni/buffers
           path: Buffers
@@ -61,11 +61,11 @@ jobs:
 
       # Match the pnpm major that wrote pnpm-lock.yaml, so --frozen-lockfile
       # can't trip over a lockfile a newer pnpm produced.
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 11
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -112,14 +112,14 @@ jobs:
 
       # Always keep the build retrievable, tag or not.
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.art.outputs.name }}
           path: dist/*
 
       - name: Publish release
         if: steps.v.outputs.release == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: Delight ${{ steps.v.outputs.version }}
           draft: true
