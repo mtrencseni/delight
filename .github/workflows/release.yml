@@ -1,0 +1,117 @@
+# Build Delight and publish it to a GitHub Release.
+#
+# Fires on a version tag (v0.1.0 → release "Delight 0.1.0"), or by hand from the
+# Actions tab for a dry run that builds and uploads an artifact without releasing.
+#
+# NOTE: Delight's frontend re-exports the shared editor + language registry from
+# the Buffers repo (src/langs.ts, src/editor-core.ts point at ../../Buffers/src/…),
+# so BOTH repos are checked out side by side. Buffers is private, and the built-in
+# GITHUB_TOKEN only reaches the current repo, so the extra checkout needs a PAT in
+# the BUFFERS_TOKEN secret — see .github/workflows/README.md.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# Needed to create the release and upload assets.
+permissions:
+  contents: write
+
+jobs:
+  windows-x64:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out Delight
+        uses: actions/checkout@v4
+        with:
+          path: delight
+
+      # Must sit next to delight/ and be spelled "Buffers": the shims import
+      # ../../Buffers/src/… relative to delight/src/.
+      - name: Check out Buffers (shared editor + language registry)
+        uses: actions/checkout@v4
+        with:
+          repository: mtrencseni/buffers
+          path: Buffers
+          token: ${{ secrets.BUFFERS_TOKEN }}
+
+      - name: Resolve version
+        id: v
+        shell: bash
+        run: |
+          conf=$(node -p "require('./delight/src-tauri/tauri.conf.json').version")
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            tag="${GITHUB_REF_NAME#v}"
+            # A tag that disagrees with the app's own version ships a binary that
+            # reports the wrong number — fail loudly instead.
+            if [[ "$tag" != "$conf" ]]; then
+              echo "::error::Tag v$tag does not match tauri.conf.json version $conf"
+              exit 1
+            fi
+            echo "version=$tag" >> "$GITHUB_OUTPUT"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$conf" >> "$GITHUB_OUTPUT"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Match the pnpm major that wrote pnpm-lock.yaml, so --frozen-lockfile
+      # can't trip over a lockfile a newer pnpm produced.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: delight/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: delight/src-tauri -> target
+
+      - name: Install frontend dependencies
+        working-directory: delight
+        run: pnpm install --frozen-lockfile
+
+      # --no-bundle skips the NSIS installer: we ship the standalone exe only.
+      - name: Build
+        working-directory: delight
+        run: pnpm tauri build --no-bundle --target x86_64-pc-windows-msvc
+
+      - name: Name the artifact
+        id: art
+        shell: bash
+        run: |
+          name="Delight-${{ steps.v.outputs.version }}-win_x64-portable.exe"
+          src="delight/src-tauri/target/x86_64-pc-windows-msvc/release/delight.exe"
+          mkdir -p dist
+          cp "$src" "dist/$name"
+          (cd dist && sha256sum "$name" > "$name.sha256")
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          ls -l dist
+
+      # Always keep the build retrievable, tag or not.
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.art.outputs.name }}
+          path: dist/*
+
+      - name: Publish release
+        if: steps.v.outputs.release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Delight ${{ steps.v.outputs.version }}
+          draft: true
+          generate_release_notes: true
+          files: dist/*
