@@ -12,11 +12,21 @@ look-alike).
 
 ## Download
 
+[**⬇ macOS (Apple silicon)**](https://github.com/mtrencseni/delight/releases/latest/download/Delight-macos_arm64.dmg)
+— a `.dmg` disk image; drag the app to Applications. The link always points at
+the newest release.
+([checksum](https://github.com/mtrencseni/delight/releases/latest/download/Delight-macos_arm64.dmg.sha256)
+· [all releases](https://github.com/mtrencseni/delight/releases))
+
 [**⬇ Windows (x64)**](https://github.com/mtrencseni/delight/releases/latest/download/Delight-win_x64-portable.exe)
 — no installer, just a single `.exe`. The link always points at the newest
 release.
 ([checksum](https://github.com/mtrencseni/delight/releases/latest/download/Delight-win_x64-portable.exe.sha256)
 · [all releases](https://github.com/mtrencseni/delight/releases))
+
+> The macOS build is signed with a *self-signed* certificate, so Gatekeeper will
+> refuse it on any machine other than the one that built it — it isn't ready for
+> general installation yet. The Windows `.exe` is unsigned, so SmartScreen warns.
 
 ![Delight Commander](docs/screenshot.png)
 
