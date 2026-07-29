@@ -309,8 +309,12 @@ export class PaneView {
         this.selectSingle(this.pendingSingle);
         this.pendingSingle = null;
       }
+      if (e.button === 2) this.rightMark = null;
     });
-    // No context menu yet — keep ⌃-click free for toggle-selection.
+    // Right-drag sweeps a run of marks; tracked on the window so the gesture
+    // survives the pointer leaving a row (or the pane) mid-drag.
+    window.addEventListener("mousemove", (e) => this.onRightMarkMove(e));
+    // Right-click marks instead of opening a menu, so suppress the default one.
     this.rowLayer.addEventListener("contextmenu", (e) => e.preventDefault());
     // Drag selected items out to Finder / other apps (native drag session).
     this.rowLayer.addEventListener("dragstart", (e) => this.onDragStart(e));
@@ -387,12 +391,59 @@ export class PaneView {
     return el ? Number(el.dataset.i) : -1;
   }
 
+  // ---- right-button marking (Total Commander) --------------------------------
+  //
+  // A right-click toggles one item's mark. Holding the button and dragging
+  // applies that same action — mark or unmark, decided by the first item — to
+  // everything the pointer passes over, so you can sweep a run in one gesture.
+
+  /** Live right-drag: which way we're marking, and the last row we applied it to. */
+  private rightMark: { on: boolean; last: number } | null = null;
+
+  private setMark(i: number, on: boolean): void {
+    if (!this.isSelectable(i)) return; // ".." is never markable
+    if (on) this.selection.add(i);
+    else this.selection.delete(i);
+  }
+
+  private beginRightMark(i: number): void {
+    this.host.activate(this);
+    if (!this.isSelectable(i)) return;
+    const on = !this.selection.has(i);
+    this.rightMark = { on, last: i };
+    this.setMark(i, on);
+    this.st.cursor = i;
+    this.anchor = i;
+    this.commitCursor(true);
+  }
+
+  /** Extend the sweep to the row under the pointer, filling in any rows skipped
+      by a fast drag so the run has no gaps. */
+  private onRightMarkMove(e: MouseEvent): void {
+    if (!this.rightMark) return;
+    const i = this.itemIndex(e);
+    if (i < 0 || i === this.rightMark.last) return;
+    const from = this.rightMark.last;
+    const [lo, hi] = from < i ? [from + 1, i] : [i, from - 1];
+    for (let j = lo; j <= hi; j++) this.setMark(j, this.rightMark.on);
+    this.rightMark.last = i;
+    this.st.cursor = i;
+    this.commitCursor(true); // also auto-scrolls when sweeping past the edge
+  }
+
   /** Mouse selection: ⇧ extends a range, ⌘/⌃ toggles one, plain selects one
       (double-click opens; a plain click on a multi-selection defers to mouseup
       so a drag-out can carry the whole set). */
   private onItemMouseDown(e: MouseEvent): void {
     const i = this.itemIndex(e);
-    if (i < 0 || e.button !== 0) return;
+    if (i < 0) return;
+    // Right button marks (Total Commander), it doesn't open a menu.
+    if (e.button === 2) {
+      e.preventDefault();
+      this.beginRightMark(i);
+      return;
+    }
+    if (e.button !== 0) return;
     // Disclosure triangle (list only) toggles the subtree, selection untouched.
     if ((e.target as HTMLElement).closest(".disclose.can")) {
       void this.toggleExpand(i);
