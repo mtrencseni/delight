@@ -14,11 +14,19 @@ export const CODE_PREVIEW_BYTES = [10 * 1024, 100 * 1024, 1024 * 1024, 10 * 1024
 export const GRID_MIN = 48;
 export const GRID_MAX = 160;
 export const GRID_DEFAULT = 80;
+/** Code-preview font size (⌘+/− while the preview is focused). The default
+    matches Buffers' editor default, so an untouched preview looks identical. */
+export const PREVIEW_FONT_DEFAULT = 13;
+export const PREVIEW_FONT_MIN = 9;
+export const PREVIEW_FONT_MAX = 32;
 
 export const state = {
   tabs: [] as Tab[],
   activeTab: 0,
   zoom: 100,
+  // Font size of the read-only code preview, independent of the app zoom —
+  // ⌘+/−/0 act on this instead when focus is inside the preview.
+  previewFontSize: PREVIEW_FONT_DEFAULT,
   settings: {
     theme: "system",
     showHidden: false,
@@ -144,6 +152,7 @@ export function persist(): void {
     const data = {
       settings: state.settings,
       zoom: state.zoom,
+      previewFontSize: state.previewFontSize,
       activeTab: state.activeTab,
       locations: state.locations,
       keybindings: state.keybindings,

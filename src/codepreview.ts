@@ -3,7 +3,7 @@
 // exactly like Buffers: line numbers, minimap, Sublime selection, syntax colors,
 // find (⌘F) and copy — but no editing. One view per pane; setDoc swaps content.
 
-import { EditorState } from "@codemirror/state";
+import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import { EditorView, highlightSpecialChars, keymap, lineNumbers } from "@codemirror/view";
 import { cursorDocEnd, cursorDocStart, defaultKeymap, selectDocEnd, selectDocStart } from "@codemirror/commands";
 import { syntaxHighlighting } from "@codemirror/language";
@@ -16,6 +16,7 @@ import {
   sublimeSelection,
 } from "./editor-core";
 import { LANGS, LANG_IDS, type LangId } from "./langs";
+import { state } from "./state";
 
 /** Tab / Shift-Tab handler: drop editor focus (back to the file pane's global
     keyboard nav) and consume the key so it can't native-tab into a path bar. */
@@ -37,10 +38,12 @@ export function langForTextFile(name: string): LangId | null {
 export class CodePreview {
   readonly view: EditorView;
   private onFocusChange?: (focused: boolean) => void;
+  private fontComp = new Compartment();
 
   constructor(parent: HTMLElement, onFocusChange?: (focused: boolean) => void) {
     this.onFocusChange = onFocusChange;
     this.view = new EditorView({ parent });
+    this.applyFontVars();
   }
 
   /** The editor's root element (re-parent it when the preview host is rebuilt). */
@@ -53,6 +56,53 @@ export class CodePreview {
     this.view.focus();
   }
 
+  // ---- preview font size (⌘+/−/0 while the preview is focused) ---------------
+  // Sized independently of the app zoom, from state.previewFontSize. Follows
+  // Buffers' hard-won recipe: the size lives in CSS vars AND a CM theme in a
+  // compartment, because a theme reconfigure is the only trigger that reliably
+  // makes CodeMirror re-read styles and refresh its cached line metrics —
+  // changing the vars alone leaves the gutter on stale line heights.
+
+  private fontTheme(): Extension {
+    const px = state.previewFontSize;
+    return EditorView.theme({
+      "&": { fontSize: `${px}px` },
+      ".cm-scroller": { lineHeight: `${Math.round(px * 1.3)}px` },
+    });
+  }
+
+  /** Inline vars on the editor root, overriding editor-core.css's :root
+      defaults for this view only (both panes' previews get their own call). */
+  private applyFontVars(): void {
+    const px = state.previewFontSize;
+    this.view.dom.style.setProperty("--ed-size", `${px}px`);
+    this.view.dom.style.setProperty("--ed-line-height", `${Math.round(px * 1.3)}px`);
+  }
+
+  /** The preview font size changed: re-apply vars + theme, then force real
+      measures while the new font settles so wrapped-line heights (and with
+      them the gutter) can't stay on the old estimates. */
+  applyFontSize(): void {
+    this.applyFontVars();
+    this.view.dispatch({ effects: this.fontComp.reconfigure(this.fontTheme()) });
+    requestAnimationFrame(() => this.remeasureVisibleLines());
+    for (const ms of [50, 150, 350]) window.setTimeout(() => this.remeasureVisibleLines(), ms);
+  }
+
+  /** Measure every visible line's real height (coordsAtPos, called directly —
+      inside a requestMeasure read it provably does NOT update the height map). */
+  private remeasureVisibleLines(): void {
+    const v = this.view;
+    if (v.state.doc.length === 0) return;
+    const from = v.state.doc.lineAt(v.viewport.from).number;
+    const to = v.state.doc.lineAt(v.viewport.to).number;
+    for (let ln = from; ln <= to; ln++) {
+      const line = v.state.doc.line(ln);
+      v.coordsAtPos(line.from);
+      if (line.length) v.coordsAtPos(line.to);
+    }
+  }
+
   /** Load `text` as `lang`, read-only. Matches Buffers' default look (soft wrap +
       minimap on, no active-line highlight). */
   setDoc(text: string, lang: LangId): void {
@@ -62,6 +112,7 @@ export class CodePreview {
         doc: text,
         extensions: [
           EditorState.readOnly.of(true),
+          this.fontComp.of(this.fontTheme()),
           lineNumbers(),
           highlightSpecialChars(),
           sublimeSelection,

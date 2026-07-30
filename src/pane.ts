@@ -626,6 +626,11 @@ export class PaneView {
     this.renderRows();
   }
 
+  /** The code-preview font size changed (⌘+/− with the preview focused). */
+  applyPreviewFont(): void {
+    this.codePreview?.applyFontSize();
+  }
+
   private applyColWidths(): void {
     const w = state.columnWidths;
     this.el.style.setProperty("--w-ext", `${w.ext}rem`);

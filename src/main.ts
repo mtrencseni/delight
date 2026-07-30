@@ -1,6 +1,6 @@
 import "./styles.css";
 import { invoke, isTauri, onEvent } from "./ipc";
-import { clearVisited, CODE_PREVIEW_BYTES, GRID_DEFAULT, GRID_MAX, GRID_MIN, hint, newTabId, normalizeColumnOrder, persist, PREVIEW_SIZES, PROGRESS_DELAYS, rebuildVisitedIndex, state, VISITED_SIZES, ZOOM_LEVELS } from "./state";
+import { clearVisited, CODE_PREVIEW_BYTES, GRID_DEFAULT, GRID_MAX, GRID_MIN, hint, newTabId, normalizeColumnOrder, persist, PREVIEW_FONT_DEFAULT, PREVIEW_FONT_MAX, PREVIEW_FONT_MIN, PREVIEW_SIZES, PROGRESS_DELAYS, rebuildVisitedIndex, state, VISITED_SIZES, ZOOM_LEVELS } from "./state";
 import { isMac } from "./platform";
 import type { PaneState, SortDir, SortKey, Tab, Theme } from "./types";
 import { PaneView } from "./pane";
@@ -219,9 +219,14 @@ class App {
       viewChips: () => this.activePane()?.setView("chips"),
       viewGrid: () => this.activePane()?.setView("grid"),
       toggleSingle: () => this.toggleSingle(),
-      zoomIn: () => this.zoomStep(1),
-      zoomOut: () => this.zoomStep(-1),
-      zoomReset: () => this.setZoom(state.settings.defaultZoom, true),
+      // With focus inside the code preview, zoom sizes the preview's text only;
+      // anywhere else it zooms the whole app.
+      zoomIn: () => (this.inCodePreview() ? this.previewZoomStep(1) : this.zoomStep(1)),
+      zoomOut: () => (this.inCodePreview() ? this.previewZoomStep(-1) : this.zoomStep(-1)),
+      zoomReset: () =>
+        this.inCodePreview()
+          ? this.setPreviewZoom(PREVIEW_FONT_DEFAULT, true)
+          : this.setZoom(state.settings.defaultZoom, true),
       toggleHidden: () => this.toggleHidden(),
       keyboardMap: () => toggleKeyboardMap(),
       preview: () => this.doPreview(),
@@ -297,6 +302,10 @@ class App {
       if (typeof s.devTools === "boolean") state.settings.devTools = s.devTools;
     }
     state.zoom = ZOOM_LEVELS.includes(saved?.zoom) ? saved.zoom : state.settings.defaultZoom;
+    state.previewFontSize =
+      typeof saved?.previewFontSize === "number"
+        ? clamp(saved.previewFontSize, PREVIEW_FONT_MIN, PREVIEW_FONT_MAX)
+        : PREVIEW_FONT_DEFAULT;
   }
 
   private buildShell(): void {
@@ -1583,6 +1592,26 @@ class App {
       0
     );
     this.setZoom(ZOOM_LEVELS[clamp(i + d, 0, ZOOM_LEVELS.length - 1)], true);
+  }
+
+  // Preview-local zoom: with focus inside the code preview, ⌘+/−/0 size the
+  // preview's text (state.previewFontSize) and leave the app zoom alone.
+
+  /** True when keyboard focus sits inside the read-only code preview. */
+  private inCodePreview(): boolean {
+    return !!(document.activeElement as HTMLElement | null)?.closest?.(".cmprev");
+  }
+
+  setPreviewZoom(px: number, announce: boolean): void {
+    state.previewFontSize = clamp(px, PREVIEW_FONT_MIN, PREVIEW_FONT_MAX);
+    // One shared size: every open preview (either pane, any tab) follows.
+    for (const view of this.views.values()) view.panes?.forEach((p) => p.applyPreviewFont());
+    if (announce) toast(`Preview ${state.previewFontSize}px`);
+    persist();
+  }
+
+  private previewZoomStep(d: 1 | -1): void {
+    this.setPreviewZoom(state.previewFontSize + d, true);
   }
 }
 
