@@ -312,9 +312,14 @@ export class PaneView {
     this.pathInput.addEventListener("focus", () => this.setEditing(true));
 
     this.pathInput.addEventListener("keydown", (e) => {
-      // The suggestion list owns the arrows and Tab while it's open.
+      // The suggestion list owns the arrows and Tab while it's open — but only
+      // BARE arrows. A modifier makes it a caret gesture the field owns: ⌘↑/⌘↓
+      // jump to the start/end of the text, ⇧↑/⇧↓ select to it. Cycling
+      // suggestions on those would be the same theft the global shortcut layer
+      // used to commit (see NATIVE_EDIT in keyboard.ts).
+      const bare = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
       if (this.acItems.length) {
-        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        if (bare && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
           e.preventDefault();
           const n = this.acItems.length;
           const d = e.key === "ArrowDown" ? 1 : -1;

@@ -58,17 +58,20 @@ export class FindBar {
     this.input.addEventListener("input", () => this.search());
     this.input.addEventListener("keydown", (e) => {
       // Bare keys inside a text field never reach the global shortcut handler,
-      // so the list can't move underneath while typing — these are ours.
+      // so the list can't move underneath while typing — these are ours. Only
+      // the BARE arrows, though: with a modifier they're caret gestures the
+      // field owns (⌘↑/⌘↓ to the ends, ⇧↑/⇧↓ to select there).
+      const bare = !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
       if (e.key === "Escape") {
         e.preventDefault();
         this.close();
       } else if (e.key === "Enter") {
         e.preventDefault();
         this.step(e.shiftKey ? -1 : 1);
-      } else if (e.key === "ArrowDown") {
+      } else if (bare && e.key === "ArrowDown") {
         e.preventDefault();
         this.step(1);
-      } else if (e.key === "ArrowUp") {
+      } else if (bare && e.key === "ArrowUp") {
         e.preventDefault();
         this.step(-1);
       } else if (e.key === "Tab") {

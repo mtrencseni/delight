@@ -1,10 +1,10 @@
 import { comboFromEvent, comboHasStrongMod, type CommandId } from "./commands";
-import { MOD } from "./platform";
+import { isMac, MOD } from "./platform";
 
-// While editing a text field, these belong to the field (copy/cut/paste/select/
-// undo/redo) even though they carry a strong modifier — never hijack them. MOD is
-// ⌘ on macOS, Ctrl on Windows/Linux; Ctrl+Y is the extra Windows redo.
-const NATIVE_EDIT = new Set([
+// Clipboard and history: they belong to the focused text field even though they
+// carry a strong modifier. MOD is ⌘ on macOS, Ctrl on Windows/Linux; Ctrl+Y is
+// the extra Windows redo.
+const CLIPBOARD_EDIT = [
   `${MOD}+KeyC`,
   `${MOD}+KeyX`,
   `${MOD}+KeyV`,
@@ -12,6 +12,62 @@ const NATIVE_EDIT = new Set([
   `${MOD}+KeyZ`,
   `${MOD}+Shift+KeyZ`,
   "Ctrl+KeyY",
+];
+
+// Moving the caret. Every one of these collides with a real Delight shortcut —
+// ⌘←/⌘→ are collapse/expand, ⌘↑/⌘↓ are jump-to-top/bottom — so without this
+// list, typing a path and pressing ⌘← moved the file list instead of jumping to
+// the start of the line.
+//
+// Spelled per platform because the gestures genuinely differ: macOS moves by
+// line with ⌘ and by word with ⌥; Windows moves by word with Ctrl and by line
+// with bare Home/End, which the guard already lets through for having no strong
+// modifier. Each also has a Shift form that extends the selection rather than
+// moving, generated below rather than listed twice.
+const CARET_MOVE = isMac
+  ? [
+      "Meta+ArrowLeft",
+      "Meta+ArrowRight",
+      "Meta+ArrowUp",
+      "Meta+ArrowDown",
+      "Alt+ArrowLeft",
+      "Alt+ArrowRight",
+    ]
+  : ["Ctrl+ArrowLeft", "Ctrl+ArrowRight", "Ctrl+Home", "Ctrl+End"];
+
+// Deleting by word or line, plus the emacs-style bindings Cocoa honors in every
+// macOS text field (⌃A/⌃E to line start/end, ⌃K kill to end, …). No selecting
+// forms — Shift doesn't extend a deletion.
+const CARET_EDIT = isMac
+  ? [
+      "Meta+Backspace",
+      "Alt+Backspace",
+      "Alt+Delete",
+      "Ctrl+KeyA",
+      "Ctrl+KeyE",
+      "Ctrl+KeyB",
+      "Ctrl+KeyF",
+      "Ctrl+KeyP",
+      "Ctrl+KeyN",
+      "Ctrl+KeyD",
+      "Ctrl+KeyH",
+      "Ctrl+KeyK",
+    ]
+  : ["Ctrl+Backspace", "Ctrl+Delete"];
+
+/** The same combo with Shift added — comboFromEvent orders Shift last. */
+function selecting(combo: string): string {
+  const cut = combo.lastIndexOf("+");
+  return `${combo.slice(0, cut + 1)}Shift+${combo.slice(cut + 1)}`;
+}
+
+// While editing a text field, all of these belong to the field — never hijack
+// them, whatever they happen to be bound to globally.
+const NATIVE_EDIT = new Set([
+  ...CLIPBOARD_EDIT,
+  ...CARET_MOVE,
+  ...CARET_MOVE.map(selecting),
+  ...CARET_EDIT,
 ]);
 
 // When the code preview (a CodeMirror editor) is focused, it owns navigation and
