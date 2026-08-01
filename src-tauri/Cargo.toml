@@ -80,6 +80,19 @@ objc2-app-kit = { version = "0.3", features = [
     "NSBitmapImageRep",
     "NSGraphics",
 ] }
+# SMB: NetFSMountURLSync (NetFS.framework) takes CoreFoundation types, so a
+# share mounts through the same system path Finder's "Connect to Server" uses —
+# no C to compile, and the Keychain answers for servers already connected to.
+objc2-core-foundation = { version = "0.3", features = [
+    "CFArray",
+    "CFDictionary",
+    "CFString",
+    "CFURL",
+] }
+# SMB: getmntinfo, to read back where the system actually mounted a share
+# (never guessed — a name collision turns /Volumes/x into /Volumes/x-1), plus
+# the errno constants NetFS reports failures with.
+libc = "0.2"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 # Windows: drive enumeration (Alt+F1/F2 picker) + Shell thumbnails (file preview).

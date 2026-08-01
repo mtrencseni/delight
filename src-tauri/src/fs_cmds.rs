@@ -229,17 +229,21 @@ pub async fn list_dir(
 }
 
 /// List an smb:// location. Host level enumerates the server's shares; below
-/// that it's the ordinary listing over the OS-native (UNC) path, with every
-/// path in the result rewritten back to canonical smb:// form — the UI never
-/// sees a UNC string. Archives inside shares compose: the translated path goes
-/// through the same resolve() as everything else.
-#[cfg(windows)]
+/// that it's the ordinary listing over the OS-native path (a UNC path on
+/// Windows, a mount point on macOS), with every path in the result rewritten
+/// back to canonical smb:// form — the UI never sees either. Archives inside
+/// shares compose: the translated path goes through the same resolve() as
+/// everything else.
+///
+/// One body for both platforms: everything that differs is behind
+/// `smb::localize_checked` / `delocalize` / `list_shares`.
+#[cfg(any(windows, target_os = "macos"))]
 fn smb_list(path: &str, child: Option<String>, home: Option<PathBuf>) -> Result<Listing, String> {
     let Some(url) = smb::SmbUrl::parse(path) else {
         return Err("Not a valid smb:// path".into());
     };
     if url.rest.is_empty() && child.is_none() {
-        let entries = smb::list_shares(&url.host)?;
+        let entries = smb::list_shares(&url)?;
         return Ok(Listing {
             path: url.host_canonical(),
             name: url.host.clone(),
@@ -248,7 +252,22 @@ fn smb_list(path: &str, child: Option<String>, home: Option<PathBuf>) -> Result<
             read_only: false,
         });
     }
-    let native = smb::localize(&url.canonical());
+    // Entering a share from the host listing: fold it into the URL. A share is
+    // always a directory, so there's no archive-descent case to preserve — and
+    // it means the translation layer is always handed a path that names its
+    // share, which is what macOS needs in order to know what to mount.
+    let (url, child) = match (url.rest.is_empty(), child) {
+        (true, Some(c)) => (
+            smb::SmbUrl::parse(&format!("{}/{}", url.host_canonical(), c))
+                .ok_or("Not a valid smb:// path")?,
+            None,
+        ),
+        (_, child) => (url, child),
+    };
+    // The one call allowed to have side effects: on macOS this mounts the share
+    // if it isn't mounted yet. It can also fail with the auth sentinel, which
+    // is why it runs before the listing rather than inside it.
+    let native = smb::localize_checked(&url.canonical())?;
     let mut l = match resolve(&native, child.clone()) {
         Loc::Archive { archive, inner } if archive.is_file() => archive::list(&archive, &inner),
         Loc::Archive { archive, inner } => {
@@ -257,11 +276,8 @@ fn smb_list(path: &str, child: Option<String>, home: Option<PathBuf>) -> Result<
         }
         Loc::Local(_) => read_listing(native, child, home),
     }
-    // On a share, "Permission denied" overwhelmingly means "no session yet" —
-    // surface the sign-in sentinel so the frontend can prompt and retry. Logon
-    // failures come through as raw os errors (1326 bad creds, 86 bad password).
     .map_err(|e| {
-        if e == "Permission denied" || e.contains("os error 1326") || e.contains("os error 86") {
+        if smb::is_auth_error(&e) {
             smb::AUTH_NEEDED.to_string()
         } else {
             e
@@ -270,10 +286,12 @@ fn smb_list(path: &str, child: Option<String>, home: Option<PathBuf>) -> Result<
 
     l.path = smb::delocalize(&l.path, &url);
     l.parent = l.parent.as_deref().map(|p| smb::delocalize(p, &url));
-    // std::path can't see above a share (the UNC prefix owns \\host\share), so
-    // at the share root parent is None — but smb has one: the share listing.
+    // Above a share root the native parent leaves the SMB tree altogether:
+    // Windows reports None (the UNC prefix owns \\host\share), macOS reports
+    // /Volumes, the directory the mount happens to live in. Neither is
+    // something the UI may see — the real parent is the server's share list.
     let host_canon = url.host_canonical();
-    if l.parent.is_none() && l.path != host_canon {
+    if !l.parent.as_deref().is_some_and(smb::is_smb) {
         l.parent = Some(host_canon.clone());
     }
     // Name: last canonical segment — splitting on the archive marker too, so
@@ -289,7 +307,7 @@ fn smb_list(path: &str, child: Option<String>, home: Option<PathBuf>) -> Result<
     Ok(l)
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn smb_list(_path: &str, _child: Option<String>, _home: Option<PathBuf>) -> Result<Listing, String> {
     Err(smb::NOT_SUPPORTED.into())
 }
@@ -601,50 +619,191 @@ fn walk_size(dir: &Path) -> u64 {
     total
 }
 
-/// End-to-end SMB listing against this machine's own shares. Environment-
-/// dependent (needs the Server service and at least one visible share), so it's
-/// #[ignore]d — run with `cargo test -- --ignored`. It exists because unit-testing
-/// delocalize alone did NOT catch the real bug: dunce::canonicalize only
-/// simplifies verbatim DISK paths, so a share came back as \\?\UNC\host\share
-/// and leaked into the path bar. Only a listing of a REAL share exercises that.
-#[cfg(all(test, windows))]
+/// End-to-end SMB listing against a REAL server. Environment-dependent, so
+/// it's #[ignore]d — run with `cargo test smb -- --ignored --nocapture`.
+///
+/// It exists because unit-testing the translation alone did NOT catch the real
+/// bugs. On Windows, `dunce::canonicalize` only simplifies verbatim DISK paths,
+/// so a share came back as `\\?\UNC\host\share` and leaked into the path bar.
+/// On macOS the equivalent trap is the mount point: the share you asked for is
+/// not necessarily the directory you got (`/Volumes/torrents-1`), and the
+/// parent of a mount root is `/Volumes`, which must never reach the UI either.
+/// Only a listing of a real share exercises any of that.
+///
+/// Point it somewhere with `DELIGHT_SMB_TEST`:
+///
+///   DELIGHT_SMB_TEST=smb://server/share   # straight to a share
+///   DELIGHT_SMB_TEST=smb://server         # also exercises share enumeration
+///
+/// Windows defaults to `smb://localhost`, whose admin shares every stock
+/// install has.
+#[cfg(all(test, any(windows, target_os = "macos")))]
 mod smb_e2e_tests {
     use super::smb_list;
+    use crate::smb;
+
+    fn target() -> Option<String> {
+        match std::env::var("DELIGHT_SMB_TEST") {
+            Ok(t) if !t.trim().is_empty() => Some(t.trim().to_string()),
+            _ if cfg!(windows) => Some("smb://localhost".into()),
+            _ => {
+                eprintln!("DELIGHT_SMB_TEST not set — skipping the live-server test");
+                None
+            }
+        }
+    }
+
+    /// The share to work in: either the one named in the target, or — when the
+    /// target is a bare host — the first visible one the server admits to,
+    /// which also proves enumeration works.
+    fn share_root() -> Option<crate::fs_cmds::Listing> {
+        let t = target()?;
+        let url = smb::SmbUrl::parse(&t).expect("DELIGHT_SMB_TEST must be an smb:// URL");
+        if !url.rest.is_empty() {
+            return Some(smb_list(&t, None, None).expect("listing the configured share"));
+        }
+        let host = smb_list(&t, None, None).unwrap_or_else(|e| {
+            panic!("host-level listing of {t} failed: {e}\n(a server that wants credentials \
+                    reports {}, which the app answers with its sign-in dialog — point \
+                    DELIGHT_SMB_TEST straight at a share instead)", smb::AUTH_NEEDED)
+        });
+        assert_eq!(host.path, url.host_canonical(), "host listing keeps its own path");
+        assert!(host.parent.is_none(), "a server has no parent");
+        assert!(
+            host.entries.iter().all(|e| e.is_dir),
+            "every share lists as a directory"
+        );
+        let share = host.entries.iter().find(|e| !e.hidden)?;
+        // Entering it as a child (clicking the row) must land exactly where
+        // typing the full path does.
+        let by_child = smb_list(&t, Some(share.name.clone()), None).expect("child entry");
+        let by_path = smb_list(&format!("{}/{}", host.path, share.name), None, None)
+            .expect("full path");
+        assert_eq!(by_child.path, by_path.path);
+        assert_eq!(by_child.parent, by_path.parent);
+        Some(by_path)
+    }
+
+    /// The invariant the UI depends on: no listing, at any depth, ever hands
+    /// back a native path.
+    fn assert_portable(l: &crate::fs_cmds::Listing) {
+        for p in [Some(&l.path), l.parent.as_ref()].into_iter().flatten() {
+            assert!(p.starts_with("smb://"), "not a portable path: {p}");
+            assert!(!p.contains('\\'), "UNC/backslashes leaked: {p}");
+            assert!(!p.contains("/Volumes/"), "a mount point leaked: {p}");
+        }
+    }
 
     #[test]
     #[ignore]
     fn share_listings_stay_in_smb_form() {
-        let host = smb_list("smb://localhost", None, None).expect("host-level listing");
-        assert_eq!(host.path, "smb://localhost");
-        let Some(share) = host.entries.iter().find(|e| !e.hidden) else {
-            eprintln!("no visible share on localhost — skipping");
-            return;
-        };
-        // Enter the share both ways the UI can: as a child, and as a full path.
-        for l in [
-            smb_list("smb://localhost", Some(share.name.clone()), None).expect("child entry"),
-            smb_list(&format!("smb://localhost/{}", share.name), None, None).expect("full path"),
-        ] {
-            assert!(
-                l.path.starts_with("smb://localhost/"),
-                "listing path must stay canonical, got {}",
-                l.path
-            );
-            assert!(!l.path.contains('\\'), "no UNC/backslashes in {}", l.path);
-            assert_eq!(l.parent.as_deref(), Some("smb://localhost"));
-            assert_eq!(l.name, share.name);
-        }
-        // One level deeper — the exact shape that leaked \\?\UNC\… to the path
-        // bar (a folder INSIDE a share, which is where canonicalize kicks in).
-        let root = smb_list(&format!("smb://localhost/{}", share.name), None, None).unwrap();
+        let Some(root) = share_root() else { return };
+        eprintln!("share root = {} ({} entries)", root.path, root.entries.len());
+        assert_portable(&root);
+        let url = smb::SmbUrl::parse(&root.path).unwrap();
+        // The share root's parent is the server's share list — std::path can't
+        // get there on either platform (Windows stops at the UNC prefix, macOS
+        // walks out to /Volumes), so this is entirely our doing.
+        assert_eq!(root.parent.as_deref(), Some(url.host_canonical().as_str()));
+        assert_eq!(root.name, url.rest, "the share names the listing");
+
+        // One level deeper — the shape that leaked \\?\UNC\… on Windows, and
+        // where a mount point would leak on macOS.
         let Some(sub) = root.entries.iter().find(|e| e.is_dir && !e.hidden) else {
-            eprintln!("no subfolder in {} — skipping the deep check", share.name);
+            eprintln!("no subfolder in {} — skipping the deep check", root.path);
             return;
         };
         let deep = smb_list(&root.path, Some(sub.name.clone()), None).expect("subfolder listing");
-        assert_eq!(deep.path, format!("smb://localhost/{}/{}", share.name, sub.name));
+        eprintln!("subfolder = {}", deep.path);
+        assert_portable(&deep);
+        assert_eq!(deep.path, format!("{}/{}", root.path, sub.name));
         assert_eq!(deep.parent.as_deref(), Some(root.path.as_str()));
         assert_eq!(deep.name, sub.name);
+
+        // And back up the way the UI goes up, all the way to the server.
+        let up = smb_list(deep.parent.as_deref().unwrap(), None, None).expect("up one");
+        assert_eq!(up.path, root.path);
+        match smb_list(up.parent.as_deref().unwrap(), None, None) {
+            Ok(server) => assert_eq!(server.path, url.host_canonical()),
+            // A server that wants credentials to enumerate is a sign-in prompt,
+            // not a broken parent link.
+            Err(e) => assert!(
+                smb::is_auth_error(&e),
+                "the share root's parent should list the server, or ask to sign in; got: {e}"
+            ),
+        }
+    }
+
+    /// macOS only: the mount is the whole ballgame. Listing a share must mount
+    /// it, the mount point must be the one the KERNEL reports (not a guess at
+    /// /Volumes/<share>), and translation must be an exact round trip over it.
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore]
+    fn listing_a_share_mounts_it_where_the_kernel_says() {
+        let Some(root) = share_root() else { return };
+        let url = smb::SmbUrl::parse(&root.path).unwrap();
+
+        // Listing it mounted it: the translated path is now a real directory.
+        let native = smb::localize(&root.path);
+        eprintln!("{} → {}", root.path, native);
+        assert!(native.starts_with('/'), "a mount point is absolute: {native}");
+        assert_ne!(native, root.path, "an unmounted share translates to itself");
+        assert!(std::path::Path::new(&native).is_dir(), "{native} should exist");
+
+        // It is the kernel's answer, not /Volumes/<share> assumed.
+        let from_mount_table = std::process::Command::new("/sbin/mount")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default();
+        assert!(
+            from_mount_table
+                .lines()
+                .any(|l| l.contains(&format!(" on {native} ")) && l.contains("smbfs")),
+            "{native} should appear in the mount table as smbfs:\n{from_mount_table}"
+        );
+
+        // Round trip, including the two ends that bite: the mount root itself,
+        // and /Volumes (the native parent, which must NOT map back into the tree).
+        assert_eq!(smb::delocalize(&native, &url), root.path);
+        assert_eq!(smb::delocalize("/Volumes", &url), "/Volumes");
+        let child = format!("{native}/some-file.txt");
+        assert_eq!(
+            smb::delocalize(&child, &url),
+            format!("{}/some-file.txt", root.path)
+        );
+        assert_eq!(smb::localize(&format!("{}/some-file.txt", root.path)), child);
+
+        // A sibling mount point that merely starts with the same characters —
+        // /Volumes/data-1 vs /Volumes/data — must not be swallowed.
+        assert_eq!(
+            smb::delocalize(&format!("{native}-1/x"), &url),
+            format!("{native}-1/x"),
+            "a longer sibling mount point is not inside this one"
+        );
+    }
+
+    /// A server that wants credentials must ask, not fail. This is the whole
+    /// reason the sentinel exists: the frontend turns it into the sign-in
+    /// dialog and retries, and anything else would be a dead end.
+    #[test]
+    #[ignore]
+    fn an_unauthenticated_server_asks_for_credentials() {
+        let Some(t) = target() else { return };
+        let url = smb::SmbUrl::parse(&t).unwrap();
+        match smb_list(&url.host_canonical(), None, None) {
+            Ok(l) => eprintln!(
+                "{} enumerates without credentials ({} shares) — nothing to assert",
+                url.host, l.entries.len()
+            ),
+            Err(e) => {
+                eprintln!("{} → {e}", url.host_canonical());
+                assert!(
+                    smb::is_auth_error(&e),
+                    "a server that won't enumerate should ask for credentials, not fail with: {e}"
+                );
+            }
+        }
     }
 }
 

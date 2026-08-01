@@ -102,7 +102,7 @@ browser. `isTauri` gates native-only calls.
 | `roots.rs` | `fs_roots` (filesystem roots abstraction), `dropbox_dir` (reads `~/.dropbox/info.json`). |
 | `settings.rs` | `load_state`/`save_state` — one JSON file in `app_config_dir`, atomic write. |
 | `sftp.rs` | SFTP over the **system ssh binary**: `ssh -s user@host sftp` starts the remote sftp subsystem and we speak the protocol over the child's stdin/stdout (`openssh-sftp-client`). SFTP always runs inside an SSH channel, so this is the same protocol any client speaks — OpenSSH just owns the SSH layer, which buys `~/.ssh/config`, agent keys, `known_hosts` and ProxyJump for free and keeps host-key verification out of our hands. UI form: `sftp://[user@]host[:port]/abs/path`; `ssh://` is an alias, canonicalized to `sftp://`. One pooled ssh process per authority (`kill_on_drop`, so nothing is orphaned); every entry point goes through `redial!`, which drops a dead session and retries once (a pooled session dies on server restart/sleep — the crate reports it as "background task failed", so that string counts as a disconnect). v1 is **read-only + copy-out**: `plan` walks the tree using the attributes READDIR already returned (statting each entry separately made a walk of /etc take 77 s) and records unreadable items and symlinks as **skips instead of aborting** — one locked-down subdirectory must not cost the user the other 500 files. `download` streams in 64 KB chunks and checks cancellation between them. Auth runs with `BatchMode=yes`: a GUI has no TTY, so a prompt would hang; failures come back as ssh's own stderr with a hint appended (an `SSH_ASKPASS` helper is the planned follow-up). Windows spawns get `CREATE_NO_WINDOW` or a console flashes. |
-| `smb.rs` | SMB via the OS, no protocol client. The UI speaks `smb://[user@]host/share/…` everywhere (portable — a favorite saved on Windows works on the Mac); `localize()` translates to UNC at every command entry (ops/details/actions call it too), `delocalize()` rewrites listing paths back so the UI never sees UNC. Host level lists shares via `NetShareEnum` (`$`-shares = hidden, ride the dotfile toggle); `smb_login` = `WNetAddConnection2W` to `\\host\IPC$` (fails on wrong creds — nothing broken cached); listings answer the `__smb_auth_required` sentinel → frontend sign-in dialog → retry. Inline `smb://user:pass@host` passwords are used once and never stored/shown. The separator flip stops at the archive `!` boundary, so archives inside shares compose. macOS: stubbed (`NOT_SUPPORTED`) — SMB there is NetFS mounts, planned. |
+| `smb.rs` | SMB via the OS, no protocol client. The UI speaks `smb://[user@]host/share/…` everywhere (portable — a favorite saved on Windows works on the Mac); `localize()` translates at every command entry (ops/details/actions call it too), `delocalize()` rewrites listing paths back so the UI never sees a native path. `localize_checked()` is the one variant allowed side effects and failure — navigation calls it, everything downstream calls the infallible `localize`. Listings answer the `__smb_auth_required` sentinel → frontend sign-in dialog → retry. Inline `smb://user:pass@host` passwords are used once and never stored/shown. **Windows:** UNC (`\\host\share`), shares via `NetShareEnum`, `smb_login` = `WNetAddConnection2W` to `\\host\IPC$` (fails on wrong creds — nothing broken cached); the separator flip stops at the archive `!` boundary, so archives inside shares compose. **macOS:** a share is a *volume*, so `localize_checked` mounts it via `NetFSMountURLSync` (NetFS.framework — the call behind Finder's Connect to Server, so the Keychain answers for servers already used, and a password is passed as an argument, never in argv). Mount on first access, never unmounted, and the mount point is always read back — from NetFS, else `getmntinfo` — because a name collision silently turns `/Volumes/x` into `/Volumes/x-1`. Shares come from `smbutil view -N`, which does **not** mount, so opening a server is side-effect-free; `$`-shares are hidden on both platforms. See "SMB on macOS" below for what only a live server can tell you. |
 | `menu.rs` | Native menu. |
 | `quicklook.m` | Obj-C `QLPreviewPanel` data source/delegate (compiled by `build.rs` on macOS only). |
 
@@ -190,6 +190,49 @@ propagate. It is a real link, not a copy:
 - Rebuild fails with "Access is denied" removing `delight.exe` when a copy is
   running — close the app first (`taskkill /F /IM delight.exe`).
 
+## SMB on macOS — what only a live server tells you
+
+Everything here was measured against a real Windows server, not inferred; the
+pure-string unit tests in `smb.rs` passed the whole time these were broken.
+
+- **Never guess the mount point.** Mounting the same share twice gives
+  `/Volumes/torrents` *and* `/Volumes/torrents-1` — two volumes for one share.
+  `delocalize` therefore tests the native path against **every** mount of that
+  share, and the prefix test requires a `/` boundary, or `/Volumes/torrents`
+  would swallow `/Volumes/torrents-1`.
+- **Mounting is serialized** (`MOUNTING` in `smb.rs`). Two panes opening the
+  same share at once don't collide loudly — the loser *succeeds*, at
+  `…-1`. Found by running the live tests in parallel, which is the same race.
+- **`smbutil` never prompts** on current macOS: it answers from the Keychain or
+  an existing session, or exits 77 (`EX_NOPERM`). So there is no password
+  prompt to feed via a pty; credentials reach the server only through
+  `NetFSMountURLSync`'s arguments.
+- **Sessions are shared per server.** Once any share is mounted, `smbutil view`
+  enumerates that server without credentials. Cold, a server that wants
+  credentials returns the auth sentinel → sign-in dialog → the retry mounts.
+- **`smbutil` resolves DNS/mDNS only, not NetBIOS.** A bare `powerplant` (what
+  a Windows favorite carries) fails there, so `host_spellings` retries as
+  `powerplant.local`. NetFS resolves the bare name itself, so mounting doesn't
+  need this — and `same_host` treats the two spellings as one machine, with an
+  IPv4 guard so `192` can't match every `192.x.x.x`.
+- **Two refusals, opposite handling.** Rejected credentials → the sentinel, so
+  the dialog reopens. A share this identity can't open, or that doesn't exist →
+  NTSTATUS `0xC000019C`, which must NOT reopen the dialog (a mistyped share
+  name would loop forever). The server doesn't distinguish the two, so the
+  message names both possibilities.
+- macOS mounts and **never unmounts** — the same way Delight never closes a
+  Finder window it didn't open.
+
+Live tests (all `#[ignore]`d, all read-only):
+
+```sh
+cd src-tauri
+DELIGHT_SMB_TEST=smb://server/share cargo test smb -- --ignored --nocapture
+DELIGHT_SMB_TEST=smb://server       cargo test smb -- --ignored --nocapture  # also share enumeration
+DELIGHT_SMB_PROBE_HOST=server       cargo test refusals -- --ignored --nocapture
+DELIGHT_SFTP_TEST=sftp://user@host  cargo test sftp -- --ignored --nocapture
+```
+
 ## Cross-platform status (Mac ✅ / Win ✅ / Linux)
 
 macOS and Windows both build and run. The backend is fenced (`#[cfg]`, `PathBuf`,
@@ -218,7 +261,7 @@ are polish, not blockers:
 | `dropbox_dir` | ✅ `~/.dropbox/info.json` | ⚠️ | ✅ | Windows stores it at `%APPDATA%\Dropbox\info.json` — add that path. |
 | Drag-out (`tauri-plugin-drag`) | ✅ | ✅ | ✅ | Plugin is cross-platform; verify the OS drag lands. |
 | Filesystem roots + drive picker (`roots.rs`) | ✅ `/` (single) | ✅ `GetLogicalDrives` | ✅ `/` | Windows enumerates mounted drive letters; the **Alt+F1 / Alt+F2** picker (`pane.ts openDrives`, commands registered only off macOS) navigates the left/right pane to a drive root. |
-| SMB (`smb.rs` + `src/smb.ts`) | ⚠️ stub — needs NetFS mount + mount-table resolution (+ `smbutil view` for shares) | ✅ UNC translation, `NetShareEnum` share listing, `WNetAddConnection2W` sign-in | ⚠️ | `smb://…` is the canonical form on every OS; only the translation layer is per-platform. |
+| SMB (`smb.rs` + `src/smb.ts`) | ✅ NetFS mount + `getmntinfo` mount-point resolution, `smbutil view` share listing | ✅ UNC translation, `NetShareEnum` share listing, `WNetAddConnection2W` sign-in | ⚠️ | `smb://…` is the canonical form on every OS; only the translation layer is per-platform. |
 
 **Devtools** (`actions.rs`): macOS drives WKWebView's private `_inspector`. The
 non-macOS `toggle_devtools`/`close_devtools` are **no-op stubs** for now (the
