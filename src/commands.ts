@@ -83,7 +83,10 @@ export interface Command {
 export const COMMANDS: Command[] = [
   // Tabs
   { id: "newTab", label: "New tab", group: "Tabs", defaults: [`${MOD}+KeyT`] },
-  { id: "closeTab", label: "Close tab", group: "Tabs", defaults: [`${MOD}+KeyW`] },
+  // Ctrl+F4 is the Windows close-document convention (and has been since MDI);
+  // it sits alongside Ctrl+W rather than replacing it. No macOS equivalent —
+  // ⌘F4 means nothing there, so the Mac keeps ⌘W alone.
+  { id: "closeTab", label: "Close tab", group: "Tabs", defaults: isMac ? [`${MOD}+KeyW`] : [`${MOD}+KeyW`, "Ctrl+F4"] },
   { id: "nextTab", label: "Next tab", group: "Tabs", defaults: [`${MOD}+Shift+BracketRight`, "Ctrl+Tab"] },
   { id: "prevTab", label: "Previous tab", short: "Prev tab", group: "Tabs", defaults: [`${MOD}+Shift+BracketLeft`, "Ctrl+Shift+Tab"] },
   { id: "cycleTabs", label: "Cycle tabs", group: "Tabs", defaults: [`${MOD}+Backquote`] },
@@ -297,7 +300,10 @@ export function mergeKeybindings(saved: unknown): Record<CommandId, string[]> {
     const s = saved as Record<string, unknown>;
     for (const c of COMMANDS) {
       const v = s[c.id];
-      if (Array.isArray(v) && v.every((x) => typeof x === "string")) base[c.id] = v as string[];
+      // COPY, don't alias: the adopt/migrate steps below push into these arrays,
+      // and mutating the caller's object is a nasty surprise (it silently
+      // corrupted a test that merged the same config twice).
+      if (Array.isArray(v) && v.every((x) => typeof x === "string")) base[c.id] = [...(v as string[])];
     }
     // Persisted configs store the FULL binding set, so newly-added default
     // shortcuts stay shadowed by an older snapshot. Adopt these for configs that
@@ -345,6 +351,8 @@ export function mergeKeybindings(saved: unknown): Record<CommandId, string[]> {
       ["expand", `${MOD}+ArrowRight`],
       ["collapse", `${MOD}+ArrowLeft`],
       ["preview", isMac ? "Digit3" : "F3"],
+      // Windows' Ctrl+F4; on macOS this is the ⌘W it already has, so it's a no-op.
+      ["closeTab", isMac ? `${MOD}+KeyW` : "Ctrl+F4"],
     ] as const) {
       const usedElsewhere = (Object.entries(base) as [CommandId, string[]][]).some(
         ([cid, combos]) => cid !== id && combos.includes(combo)
