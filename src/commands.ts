@@ -45,6 +45,8 @@ export type CommandId =
   | "sortSize"
   | "sortCreated"
   | "sortModified"
+  | "focusPath"
+  | "connectNetwork"
   | "viewList"
   | "viewChips"
   | "viewGrid"
@@ -158,7 +160,14 @@ export const COMMANDS: Command[] = [
   { id: "sortModified", label: "Sort by modified", short: "Sort modified", group: "Sorting", defaults: [`${MOD}+KeyM`] },
 
   // View
-  { id: "viewList", label: "List view", group: "View", defaults: [`${MOD}+KeyL`] },
+  // ⌘L is the browser's "focus the address bar", and that muscle memory beats
+  // any view shortcut — so List view moved to ⌘⇧L, keeping its mnemonic.
+  // migrateBindings() clears a ⌘L saved against viewList by an older build.
+  { id: "focusPath", label: "Focus the path bar", short: "Path bar", group: "Panes & navigation", defaults: [`${MOD}+KeyL`] },
+  // No default: every obvious combo is taken, and the path bar's globe button
+  // is the discoverable route. Bindable in the Shortcuts tab like anything else.
+  { id: "connectNetwork", label: "Connect to a server", short: "Connect", group: "Panes & navigation", defaults: [] },
+  { id: "viewList", label: "List view", group: "View", defaults: [`${MOD}+Shift+KeyL`] },
   { id: "viewChips", label: "Chips view", group: "View", defaults: [`${MOD}+KeyC`] },
   { id: "viewGrid", label: "Icon view", group: "View", defaults: [`${MOD}+KeyI`] },
   { id: "toggleSingle", label: "Single-pane view", short: "Single pane", group: "View", defaults: [`${MOD}+KeyP`] },
@@ -311,6 +320,13 @@ export function mergeKeybindings(saved: unknown): Record<CommandId, string[]> {
     // so ⌘C is free for viewChips (whose default we then leave intact).
     if (base.sortCreated.length === 1 && base.sortCreated[0] === `${MOD}+KeyC`) {
       base.sortCreated = [`${MOD}+Shift+KeyC`];
+    }
+    // ⌘L used to be List view and is now "focus the path bar" (the browser
+    // convention). A saved config still holds the old ⌘L, which would leave two
+    // commands answering one combo — move List to ⌘⇧L so ⌘L is free for
+    // focusPath, whose default then applies (it's absent from older configs).
+    if (base.viewList.length === 1 && base.viewList[0] === `${MOD}+KeyL`) {
+      base.viewList = [`${MOD}+Shift+KeyL`];
     }
     // Single-pane view's default moved ⌘⇧P → ⌘P; adopt it for untouched configs.
     if (base.toggleSingle.length === 1 && base.toggleSingle[0] === `${MOD}+Shift+KeyP`) {

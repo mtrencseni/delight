@@ -2456,3 +2456,149 @@ body.fav-dragging * {
   background: var(--hover);
   color: var(--text);
 }
+
+/* Path bar while it has focus: the whole width belongs to the field. At a drive
+   root the disk readout and the .pathgap spacer squeeze the input down to the
+   few characters of "D:\", which is precisely when you need room to type — so
+   both step aside. Declared AFTER the .at-root rules so it wins on order. */
+.pathbar.editing .diskinfo,
+.pathbar.editing .pathgap {
+  display: none;
+}
+
+.pathbar.editing .pathinput {
+  flex: 1;
+}
+
+/* Recent-path suggestions under the path bar (prefix matches from the visited
+   cache). The bar is the positioning context. */
+.pathbar {
+  position: relative;
+}
+
+.pathac {
+  position: absolute;
+  top: 100%;
+  left: 0.375rem;
+  right: 0.375rem;
+  z-index: 40;
+  margin-top: 0.125rem;
+  padding: 0.25rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  max-height: 16rem;
+  overflow-y: auto;
+}
+
+.pathac.hidden {
+  display: none;
+}
+
+.pathac-item {
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.375rem;
+  font-size: 0.8125rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl; /* keep the TAIL of a long path visible — that's the part that differs */
+  text-align: left;
+  cursor: default;
+}
+
+.pathac-item:hover {
+  background: var(--hover);
+}
+
+.pathac-item.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Connect-to-a-server button, left of the view buttons in the path bar. */
+.netbtn {
+  flex: none;
+}
+
+/* ---------- connect-to-a-server dialog ---------- */
+.modal-connect {
+  width: 26rem;
+  max-width: 90vw;
+}
+
+.modal-connect .seg {
+  margin: 0.25rem 0 0.5rem;
+  align-self: flex-start;
+}
+
+.connect-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1875rem;
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.connect-field .modal-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* The path the dialog will hand back — shown live so "Connect" holds no
+   surprises. Monospaced because it's a path, not prose. */
+.connect-preview {
+  margin-top: 0.75rem;
+  padding: 0.375rem 0.5rem;
+  border-radius: 0.375rem;
+  background: var(--panel-alt);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.75rem;
+  color: var(--text);
+  word-break: break-all;
+  min-height: 1.25rem;
+}
+
+/* Nothing built yet: the scheme alone, muted, so the box always says something
+   true rather than sitting empty behind a mystery ellipsis. */
+.connect-preview.partial {
+  color: var(--text-faint);
+}
+
+.connect-recents-head {
+  margin-top: 0.875rem;
+  font-size: 0.6875rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.connect-recents {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  margin-top: 0.25rem;
+  max-height: 9rem;
+  overflow-y: auto;
+}
+
+.connect-recent {
+  text-align: left;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl; /* keep the tail — the part that differs — visible */
+}
+
+.connect-recent:hover {
+  background: var(--hover);
+}

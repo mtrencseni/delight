@@ -1,10 +1,10 @@
-// File operations — the only commands that MUTATE the user's files (copy, move,
+﻿// File operations â€” the only commands that MUTATE the user's files (copy, move,
 // rename, new folder, trash). Everything else in the app is read-only. Each
 // command validates its inputs and refuses unsafe requests (e.g. moving a folder
 // into itself); deletes go to the Trash (recoverable), never a hard unlink.
 //
 // Copy / move / trash report progress to the UI via the "op-progress" event and
-// can be stopped mid-flight (cancel_op) — the frontend shows a progress dialog
+// can be stopped mid-flight (cancel_op) â€” the frontend shows a progress dialog
 // that can be sent to the background. Progress is byte-based for copy/move and
 // item-based for trash. Cross-platform: pure std::fs + the `trash` crate.
 
@@ -29,6 +29,18 @@ impl Item {
     fn path(&self) -> PathBuf {
         Path::new(&self.dir).join(&self.name)
     }
+}
+
+/// smb:// dirs become their OS-native form before any op touches them; local
+/// paths pass through untouched. Every mutating command calls this on entry.
+fn localize_items(items: Vec<Item>) -> Vec<Item> {
+    items
+        .into_iter()
+        .map(|mut it| {
+            it.dir = crate::smb::localize(&it.dir);
+            it
+        })
+        .collect()
 }
 
 /// What a copy/move/trash actually did, so the UI can report skips + cancellation.
@@ -70,13 +82,13 @@ struct Progress {
     done: u64,
     total: u64,
     current: String,
-    /// "bytes" (copy/move) or "items" (trash) — how the UI formats done/total.
+    /// "bytes" (copy/move) or "items" (trash) â€” how the UI formats done/total.
     unit: &'static str,
 }
 
 /// Emits throttled "op-progress" events and carries the cancel flag. Registers the
 /// op in `cancels()` on creation and removes it on drop.
-struct Ctx {
+pub(crate) struct Ctx {
     app: AppHandle,
     id: String,
     unit: &'static str,
@@ -103,11 +115,11 @@ impl Ctx {
         ctx
     }
 
-    fn cancelled(&self) -> bool {
+    pub(crate) fn cancelled(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
     }
 
-    fn advance(&mut self, by: u64, current: &str) {
+    pub(crate) fn advance(&mut self, by: u64, current: &str) {
         self.done = (self.done + by).min(self.total);
         self.emit(current, false);
     }
@@ -171,13 +183,13 @@ fn friendly(e: &io::Error) -> String {
 fn valid_name(name: &str) -> Result<(), String> {
     let n = name.trim();
     if n.is_empty() {
-        return Err("Name can’t be empty".into());
+        return Err("Name canâ€™t be empty".into());
     }
     if n == "." || n == ".." {
         return Err("That name is reserved".into());
     }
     if n.contains('/') || n.contains('\0') {
-        return Err("Name can’t contain “/”".into());
+        return Err("Name canâ€™t contain â€œ/â€".into());
     }
     Ok(())
 }
@@ -241,10 +253,10 @@ fn remove_any(p: &Path) -> io::Result<()> {
 fn ensure_not_into_self(src: &Path, dest_dir: &Path, name: &str) -> Result<(), String> {
     let (src_c, dest_c) = match (dunce::canonicalize(src), dunce::canonicalize(dest_dir)) {
         (Ok(a), Ok(b)) => (a, b),
-        _ => return Ok(()), // can't resolve → let the copy attempt surface any error
+        _ => return Ok(()), // can't resolve â†’ let the copy attempt surface any error
     };
     if dest_c == src_c || dest_c.starts_with(&src_c) {
-        return Err(format!("Can’t put “{name}” inside itself"));
+        return Err(format!("Canâ€™t put â€œ{name}â€ inside itself"));
     }
     Ok(())
 }
@@ -295,9 +307,9 @@ pub async fn move_entries(
 }
 
 /// Sentinel a sink returns to unwind out of a single-pass extraction on cancel.
-const CANCELLED: &str = "\u{0}cancelled";
+pub(crate) const CANCELLED: &str = "\u{0}cancelled";
 
-/// Copy-out from an archive — the only way bytes ever leave one. Every wanted
+/// Copy-out from an archive â€” the only way bytes ever leave one. Every wanted
 /// member is streamed straight to its destination in a single pass over the
 /// archive; nothing is staged in a temp file.
 fn extract_op(
@@ -322,7 +334,7 @@ fn extract_op(
         let rel = p.strip_prefix(&prefix).unwrap_or(p);
         let out = dest.join(rel.replace('/', std::path::MAIN_SEPARATOR_STR));
         // Inner paths are normalized at index time, so traversal is already
-        // impossible; re-check anyway — this is the one place we write.
+        // impossible; re-check anyway â€” this is the one place we write.
         out.starts_with(dest).then_some(out)
     };
 
@@ -342,7 +354,7 @@ fn extract_op(
         }
         let root = archive::normalize_inner(&format!("{inner}/{}", it.name));
 
-        // Directories first — including empty ones, which have no files to imply
+        // Directories first â€” including empty ones, which have no files to imply
         // them and would otherwise be silently dropped.
         for d in index.dirs_under(&root) {
             if let Some(out) = rel_of(&d.path) {
@@ -463,14 +475,27 @@ async fn run_op(
     overwrite: bool,
     is_move: bool,
 ) -> Result<OpResult, String> {
+    // Remote source: an async protocol conversation, so it can't run on a
+    // spawn_blocking thread like the local paths below.
+    if items.first().is_some_and(|it| crate::sftp::is_sftp(&it.dir)) {
+        if is_move {
+            return Err("Canâ€™t move off a remote host yet â€” copy it instead".into());
+        }
+        return download_op(app, id, items, dest, overwrite).await;
+    }
+    if crate::sftp::is_sftp(&dest) {
+        return Err("Copying TO a remote host isnâ€™t supported yet".into());
+    }
     tauri::async_runtime::spawn_blocking(move || {
+        let dest = crate::smb::localize(&dest);
+        let items = localize_items(items);
         // Archives are strictly read-only: never a destination, and copy-out only.
         if Loc::parse(&dest).is_archive() {
-            return Err("Can’t write into an archive".into());
+            return Err("Canâ€™t write into an archive".into());
         }
         if items.first().is_some_and(|it| Loc::parse(&it.dir).is_archive()) {
             if is_move {
-                return Err("Can’t move out of an archive — copy it instead".into());
+                return Err("Canâ€™t move out of an archive â€” copy it instead".into());
             }
             return extract_op(app, id, items, Path::new(&dest), overwrite);
         }
@@ -496,7 +521,7 @@ async fn run_op(
             ensure_not_into_self(&src, dest_dir, &it.name)?;
             let same = same_folder(&src, dest_dir);
 
-            // Within the same folder: a move is a no-op; a copy makes a "… copy".
+            // Within the same folder: a move is a no-op; a copy makes a "â€¦ copy".
             let target = if same {
                 if is_move {
                     res.skipped.push(it.name.clone());
@@ -548,11 +573,73 @@ async fn run_op(
     .map_err(|e| e.to_string())?
 }
 
+/// Copy from a remote host to a local folder (F5 with a remote source pane).
+/// Mirrors extract_op's shape: plan the tree first so the progress total is
+/// real, then stream each file, checking the cancel flag at chunk boundaries.
+async fn download_op(
+    app: AppHandle,
+    id: String,
+    items: Vec<Item>,
+    dest: String,
+    overwrite: bool,
+) -> Result<OpResult, String> {
+    let dest_dir = PathBuf::from(&dest);
+    if !dest_dir.is_dir() {
+        return Err("Destination is not a folder".into());
+    }
+    // Walk the remote tree once for the byte total (and to create directories
+    // in the right order). Costs a READDIR per remote directory, which is what
+    // makes the progress bar honest rather than a spinner.
+    let mut files: Vec<(String, PathBuf, u64)> = Vec::new(); // (remote, local, size)
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut res = OpResult::default();
+    for it in &items {
+        // Unreadable items and symlinks come back as skips rather than
+        // aborting the copy â€” one locked-down subdirectory shouldn't cost the
+        // user the other 500 files.
+        crate::sftp::plan(&it.dir, &it.name, &dest_dir, &mut files, &mut dirs, &mut res.skipped)
+            .await?;
+    }
+    let total: u64 = files.iter().map(|(_, _, n)| *n).sum();
+
+    let mut ctx = Ctx::new(app, id, "bytes", total);
+    for d in &dirs {
+        let _ = std::fs::create_dir_all(d);
+    }
+    for (remote, local, size) in files {
+        if ctx.cancelled() {
+            res.cancelled = true;
+            break;
+        }
+        let name = local
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        if local.exists() && !overwrite {
+            res.skipped.push(name);
+            ctx.advance(size, "");
+            continue;
+        }
+        match crate::sftp::download(&remote, &local, &mut ctx).await {
+            Ok(()) => res.done.push(name),
+            Err(e) if e == CANCELLED => {
+                // Half a file is worse than none â€” the partial write goes.
+                let _ = std::fs::remove_file(&local);
+                res.cancelled = true;
+                break;
+            }
+            Err(_) => res.skipped.push(name),
+        }
+    }
+    Ok(res)
+}
+
 #[tauri::command]
 pub async fn rename_entry(dir: String, name: String, new_name: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let dir = crate::smb::localize(&dir);
         if Loc::parse(&dir).is_archive() {
-            return Err("Can’t rename inside an archive".into());
+            return Err("Canâ€™t rename inside an archive".into());
         }
         valid_name(&new_name)?;
         let target = new_name.trim();
@@ -562,7 +649,7 @@ pub async fn rename_entry(dir: String, name: String, new_name: String) -> Result
         let d = Path::new(&dir);
         let dst = d.join(target);
         if dst.symlink_metadata().is_ok() {
-            return Err(format!("“{target}” already exists"));
+            return Err(format!("â€œ{target}â€ already exists"));
         }
         fs::rename(d.join(&name), &dst).map_err(|e| friendly(&e))?;
         Ok(())
@@ -574,13 +661,14 @@ pub async fn rename_entry(dir: String, name: String, new_name: String) -> Result
 #[tauri::command]
 pub async fn create_folder(dir: String, name: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let dir = crate::smb::localize(&dir);
         if Loc::parse(&dir).is_archive() {
-            return Err("Can’t create a folder inside an archive".into());
+            return Err("Canâ€™t create a folder inside an archive".into());
         }
         valid_name(&name)?;
         let target = Path::new(&dir).join(name.trim());
         if target.symlink_metadata().is_ok() {
-            return Err(format!("“{}” already exists", name.trim()));
+            return Err(format!("â€œ{}â€ already exists", name.trim()));
         }
         fs::create_dir(&target).map_err(|e| friendly(&e))?;
         Ok(())
@@ -591,7 +679,7 @@ pub async fn create_folder(dir: String, name: String) -> Result<(), String> {
 
 // ---- pack --------------------------------------------------------------------
 
-/// "name.zip", then "name-1.zip", "name-2.zip"… — matches how unpack names the
+/// "name.zip", then "name-1.zip", "name-2.zip"â€¦ â€” matches how unpack names the
 /// folder it creates, so both operations dedupe the same way.
 fn unique_path(dir: &Path, stem: &str, ext: &str) -> PathBuf {
     let mut p = dir.join(format!("{stem}{ext}"));
@@ -603,7 +691,7 @@ fn unique_path(dir: &Path, stem: &str, ext: &str) -> PathBuf {
     p
 }
 
-/// Civil date from days since the Unix epoch (inverse of `days_from_civil`) —
+/// Civil date from days since the Unix epoch (inverse of `days_from_civil`) â€”
 /// zip stores wall-clock date/time fields, not an epoch offset.
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719468;
@@ -656,12 +744,12 @@ fn entry_options(meta: &fs::Metadata) -> zip::write::SimpleFileOptions {
 
 /// What the pack walk needs from the progress context. Keeping it behind a trait
 /// lets tests exercise the same code without a Tauri AppHandle.
-trait PackSink {
+pub(crate) trait ProgressSink {
     fn cancelled(&self) -> bool;
     fn advance(&mut self, by: u64, current: &str);
 }
 
-impl PackSink for Ctx {
+impl ProgressSink for Ctx {
     fn cancelled(&self) -> bool {
         Ctx::cancelled(self)
     }
@@ -675,7 +763,7 @@ fn pack_file<W: std::io::Write + std::io::Seek>(
     zw: &mut zip::ZipWriter<W>,
     src: &Path,
     rel: &str,
-    ctx: &mut dyn PackSink,
+    ctx: &mut dyn ProgressSink,
 ) -> Result<(), String> {
     use std::io::{Read, Write};
     let meta = fs::metadata(src).map_err(|e| friendly(&e))?;
@@ -696,12 +784,12 @@ fn pack_file<W: std::io::Write + std::io::Seek>(
 }
 
 /// Recursively add a directory. Empty ones still get an entry of their own, or
-/// they'd be lost — the same trap that bit extraction.
+/// they'd be lost â€” the same trap that bit extraction.
 fn pack_dir<W: std::io::Write + std::io::Seek>(
     zw: &mut zip::ZipWriter<W>,
     src: &Path,
     rel: &str,
-    ctx: &mut dyn PackSink,
+    ctx: &mut dyn ProgressSink,
 ) -> Result<(), String> {
     let meta = fs::metadata(src).map_err(|e| friendly(&e))?;
     zw.add_directory(rel, entry_options(&meta)).map_err(|e| e.to_string())?;
@@ -735,8 +823,10 @@ pub async fn create_archive(
     name: String,
 ) -> Result<OpResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let dest = crate::smb::localize(&dest);
+        let items = localize_items(items);
         if Loc::parse(&dest).is_archive() || items.iter().any(|it| Loc::parse(&it.dir).is_archive()) {
-            return Err("Can’t pack into or out of an archive".into());
+            return Err("Canâ€™t pack into or out of an archive".into());
         }
         let dest_dir = Path::new(&dest);
         if !dest_dir.is_dir() {
@@ -835,7 +925,7 @@ mod pack_tests {
             let f = fs::File::create(&target).unwrap();
             let mut zw = zip::ZipWriter::new(std::io::BufWriter::new(f));
             struct NoProgress;
-            impl PackSink for NoProgress {
+            impl ProgressSink for NoProgress {
                 fn cancelled(&self) -> bool {
                     false
                 }
@@ -918,8 +1008,9 @@ mod meta_tests {
 #[tauri::command]
 pub async fn trash_entries(app: AppHandle, id: String, items: Vec<Item>) -> Result<OpResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let items = localize_items(items);
         if items.first().is_some_and(|it| Loc::parse(&it.dir).is_archive()) {
-            return Err("Can’t delete inside an archive".into());
+            return Err("Canâ€™t delete inside an archive".into());
         }
         let paths: Vec<(String, PathBuf)> = items
             .iter()

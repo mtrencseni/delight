@@ -45,6 +45,16 @@ filetime = "0.2"
 # decode-only crates, which is all a read-only browser needs.
 tar = "0.4"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+# SFTP, spoken over the SYSTEM ssh binary (`ssh -s host sftp`) rather than an
+# in-process SSH stack: OpenSSH keeps ownership of auth, known_hosts,
+# ~/.ssh/config and ProxyJump, and we only implement the file protocol. Pure
+# Rust, no default features (the optional `openssh` feature pulls in connection
+# multiplexing, which Win32-OpenSSH doesn't support — we spawn ssh ourselves).
+openssh-sftp-client = { version = "0.15", default-features = false }
+tokio = { version = "1", features = ["process", "io-util", "sync", "time", "fs"] }
+futures-util = { version = "0.3", default-features = false }
+# The buffer type openssh-sftp-client's File::read takes/returns.
+bytes = "1"
 bzip2-rs = "0.1"
 ruzstd = "0.7"
 lzma-rs = "0.3"
@@ -81,7 +91,14 @@ windows = { version = "0.58", features = [
     "Win32_System_Com",
     "Win32_UI_Shell",
     "Win32_Graphics_Gdi",
+    # SMB: NetShareEnum (smb://host share listing) + WNetAddConnection2W (sign-in).
+    "Win32_NetworkManagement_NetManagement",
+    "Win32_NetworkManagement_WNet",
 ] }
+
+[dev-dependencies]
+# Async test harness for the live-host SFTP tests (all #[ignore]d).
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [profile.release]
 strip = true

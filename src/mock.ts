@@ -153,6 +153,12 @@ function listDir(pathIn: string, child?: string | null) {
   if (raw === "~") raw = HOME;
   else if (raw.startsWith("~" + SEP)) raw = HOME + raw.slice(1);
 
+  // smb:// — a synthetic server pair (see listSmb), before the archive branch
+  // so smb-path joins stay '/'-separated.
+  if (/^smb:\/\//i.test(raw)) return listSmb(raw, child ?? null);
+  // sftp:// (and its ssh:// alias) — a synthetic remote host.
+  if (/^(sftp|ssh):\/\//i.test(raw)) return listSftp(raw, child ?? null);
+
   // Archive browsing: serve the synthetic contents so the UI can be exercised
   // without a zip decoder in the browser.
   const split = archiveSplit(raw);
@@ -193,6 +199,143 @@ function listDir(pathIn: string, child?: string | null) {
     name: segs.length ? segs[segs.length - 1] : SEP,
     parent: segs.length ? (segs.length === 1 ? SEP : SEP + segs.slice(0, -1).join(SEP)) : null,
     entries,
+  };
+}
+
+// ---- smb:// mock: two servers -------------------------------------------------
+// "nas" lists without credentials; "locked" answers the auth sentinel until
+// smb_login succeeds with marton / hunter2 — so the whole sign-in flow
+// (dialog → wrong password hint → retry → listing) runs in the browser.
+
+let smbAuthed = false;
+
+const SMB_TREE: Record<string, Record<string, number | null>> = {
+  media: {
+    movies: null,
+    "movies/clip.mp4": 49_600_000,
+    "notes.txt": 240,
+    "backup.zip": 9_204_411,
+  },
+  backup: { "disk.img": 120_000_000 },
+  // Hidden (admin-style) share — rides the show-hidden toggle.
+  admin$: { "log.txt": 900 },
+};
+
+export function mockSmbLogin(host: string, user: string, password: string): void {
+  if (host !== "locked") return; // "nas" needs no session; accept and move on
+  if (user === "marton" && password === "hunter2") {
+    smbAuthed = true;
+    return;
+  }
+  throw "Wrong user name or password";
+}
+
+function listSmb(raw: string, child: string | null) {
+  const m = /^smb:\/\/(?:([^/@]*)@)?([^/]+)(?:\/(.*))?$/i.exec(raw.replace(/\/+$/, ""));
+  if (!m) throw "Not a valid smb:// path";
+  const [, userAt, host, restRaw] = m;
+  const auth = userAt ? `${userAt}@${host}` : host;
+  if (host !== "nas" && host !== "locked") throw "Server not found";
+  if (host === "locked" && !smbAuthed) throw "__smb_auth_required";
+
+  const segs = (restRaw ?? "").split("/").filter(Boolean);
+  if (child && isArchiveName(child)) return listArchive(`smb://${auth}/${[...segs, child].join("/")}`, "");
+  if (child) segs.push(child);
+
+  const mk = (name: string, isDir: boolean, size: number, hidden = false) => ({
+    name,
+    ...splitExt(name, isDir),
+    isDir,
+    isSymlink: false,
+    size: isDir ? 0 : size,
+    modifiedMs: isDir ? null : Date.now() - 3 * day,
+    createdMs: null,
+    permissions: null,
+    hidden,
+  });
+
+  // Host level: the server's shares as directory-like rows.
+  if (segs.length === 0) {
+    return {
+      path: `smb://${auth}`,
+      name: host,
+      parent: null,
+      entries: Object.keys(SMB_TREE).map((s) => mk(s, true, 0, s.endsWith("$"))),
+    };
+  }
+
+  const share = SMB_TREE[segs[0]];
+  if (!share) throw "No such folder";
+  const prefix = segs.slice(1).join("/");
+  if (prefix && share[prefix] !== null) throw "No such folder";
+  const entries = Object.entries(share)
+    .filter(([p]) => {
+      const under = prefix ? (p.startsWith(prefix + "/") ? p.slice(prefix.length + 1) : null) : p;
+      return under !== null && !under.includes("/");
+    })
+    .map(([p, size]) => mk(p.split("/").pop()!, size === null, size ?? 0));
+
+  const path = `smb://${auth}/${segs.join("/")}`;
+  return {
+    path,
+    name: segs[segs.length - 1],
+    parent: segs.length === 1 ? `smb://${auth}` : `smb://${auth}/${segs.slice(0, -1).join("/")}`,
+    entries,
+  };
+}
+
+// ---- sftp:// mock -------------------------------------------------------------
+// One synthetic host. A bare authority resolves to the login directory the way
+// the backend does (canonicalize "."), so the path bar shows a real path.
+
+const SFTP_HOME = "/home/marton";
+const SFTP_TREE: Record<string, number | null> = {
+  "/": null,
+  "/etc": null,
+  "/etc/hostname": 9,
+  "/home": null,
+  "/home/marton": null,
+  "/home/marton/notes.md": 1840,
+  "/home/marton/deploy.sh": 620,
+  "/home/marton/.bashrc": 3771,
+  "/home/marton/projects": null,
+  "/home/marton/projects/server.py": 4200,
+};
+
+function listSftp(raw: string, child: string | null) {
+  const m = /^(?:sftp|ssh):\/\/([^/]+)(\/.*)?$/i.exec(raw.replace(/\/+$/, "") || raw);
+  if (!m) throw "Not a valid sftp:// path";
+  const [, authority, restRaw] = m;
+  if (!/(^|@)(bytepawn|nas|host)/i.test(authority)) throw "ssh: Could not resolve hostname";
+  const auth = `sftp://${authority}`;
+  // Empty path = the login directory, resolved like the real thing.
+  let path = restRaw ? restRaw.replace(/\/+$/, "") || "/" : SFTP_HOME;
+  if (child) path = path === "/" ? `/${child}` : `${path}/${child}`;
+  if (!(path in SFTP_TREE) || SFTP_TREE[path] !== null) throw "No such folder";
+
+  const entries = Object.entries(SFTP_TREE)
+    .filter(([p]) => p !== "/" && p.startsWith(path === "/" ? "/" : path + "/"))
+    .map(([p, size]) => [p.slice(path === "/" ? 1 : path.length + 1), p, size] as const)
+    .filter(([rel]) => rel && !rel.includes("/"))
+    .map(([name, , size]) => ({
+      name,
+      ...splitExt(name, size === null),
+      isDir: size === null,
+      isSymlink: false,
+      size: size ?? 0,
+      modifiedMs: Date.now() - 5 * day,
+      createdMs: null, // SFTP carries no creation time
+      permissions: size === null ? "drwxr-xr-x" : "-rw-r--r--",
+      hidden: name.startsWith("."),
+    }));
+
+  const parent = path === "/" ? null : `${auth}${path.slice(0, path.lastIndexOf("/")) || "/"}`;
+  return {
+    path: `${auth}${path}`,
+    name: path === "/" ? authority.replace(/^.*@/, "") : path.split("/").pop()!,
+    parent,
+    entries,
+    readOnly: true, // v1: browse + copy-out
   };
 }
 
@@ -406,6 +549,21 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
     // defaults so setArchiveFormats is exercised on the same code path.
     case "archive_formats":
       return { zipExts: [], suffixes: [] } as T;
+    case "native_path":
+      return String(args?.path ?? "") as T; // no smb translation in the browser
+    case "read_file_bytes": {
+      // A one-page PDF, so the blob path can be exercised without a real file.
+      const pdf =
+        "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n" +
+        "2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n" +
+        "3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 99 99]>>endobj\ntrailer<</Root 1 0 R>>\n";
+      const cap = Number(args?.maxBytes ?? 0);
+      if (cap > 0 && pdf.length > cap) return { data: "", truncated: true } as T;
+      return { data: btoa(pdf), truncated: false } as T;
+    }
+    case "smb_login":
+      mockSmbLogin(String(args?.host ?? ""), String(args?.user ?? ""), String(args?.password ?? ""));
+      return undefined as T;
     case "set_archive_password":
       // Mirror the backend: only a working password is accepted/stored.
       if (String(args?.password ?? "") !== "hunter2") throw "Wrong password";

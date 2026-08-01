@@ -1,4 +1,6 @@
 use crate::archive::{self, Loc};
+use crate::sftp;
+use crate::smb;
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -201,19 +203,95 @@ pub async fn list_dir(
     path: String,
     child: Option<String>,
 ) -> Result<Listing, String> {
+    // SFTP is genuinely async (a protocol conversation, not a blocking syscall),
+    // so it runs on the async runtime rather than a spawn_blocking thread.
+    if sftp::is_sftp(&path) {
+        return sftp::list(&path, child.as_deref()).await;
+    }
     let home = app.path().home_dir().ok();
-    tauri::async_runtime::spawn_blocking(move || match resolve(&path, child.clone()) {
+    tauri::async_runtime::spawn_blocking(move || {
+        if smb::is_smb(&path) {
+            return smb_list(&path, child, home);
+        }
+        match resolve(&path, child.clone()) {
+            Loc::Archive { archive, inner } if archive.is_file() => archive::list(&archive, &inner),
+            // A path that looks archive-ish but isn't a file (e.g. a folder literally
+            // named "foo.zip") browses as an ordinary directory.
+            Loc::Archive { archive, inner } => {
+                let joined = archive.join(inner.replace('/', std::path::MAIN_SEPARATOR_STR));
+                read_listing(joined.to_string_lossy().into_owned(), None, home)
+            }
+            Loc::Local(_) => read_listing(path, child, home),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// List an smb:// location. Host level enumerates the server's shares; below
+/// that it's the ordinary listing over the OS-native (UNC) path, with every
+/// path in the result rewritten back to canonical smb:// form — the UI never
+/// sees a UNC string. Archives inside shares compose: the translated path goes
+/// through the same resolve() as everything else.
+#[cfg(windows)]
+fn smb_list(path: &str, child: Option<String>, home: Option<PathBuf>) -> Result<Listing, String> {
+    let Some(url) = smb::SmbUrl::parse(path) else {
+        return Err("Not a valid smb:// path".into());
+    };
+    if url.rest.is_empty() && child.is_none() {
+        let entries = smb::list_shares(&url.host)?;
+        return Ok(Listing {
+            path: url.host_canonical(),
+            name: url.host.clone(),
+            parent: None,
+            entries,
+            read_only: false,
+        });
+    }
+    let native = smb::localize(&url.canonical());
+    let mut l = match resolve(&native, child.clone()) {
         Loc::Archive { archive, inner } if archive.is_file() => archive::list(&archive, &inner),
-        // A path that looks archive-ish but isn't a file (e.g. a folder literally
-        // named "foo.zip") browses as an ordinary directory.
         Loc::Archive { archive, inner } => {
             let joined = archive.join(inner.replace('/', std::path::MAIN_SEPARATOR_STR));
             read_listing(joined.to_string_lossy().into_owned(), None, home)
         }
-        Loc::Local(_) => read_listing(path, child, home),
-    })
-    .await
-    .map_err(|e| e.to_string())?
+        Loc::Local(_) => read_listing(native, child, home),
+    }
+    // On a share, "Permission denied" overwhelmingly means "no session yet" —
+    // surface the sign-in sentinel so the frontend can prompt and retry. Logon
+    // failures come through as raw os errors (1326 bad creds, 86 bad password).
+    .map_err(|e| {
+        if e == "Permission denied" || e.contains("os error 1326") || e.contains("os error 86") {
+            smb::AUTH_NEEDED.to_string()
+        } else {
+            e
+        }
+    })?;
+
+    l.path = smb::delocalize(&l.path, &url);
+    l.parent = l.parent.as_deref().map(|p| smb::delocalize(p, &url));
+    // std::path can't see above a share (the UNC prefix owns \\host\share), so
+    // at the share root parent is None — but smb has one: the share listing.
+    let host_canon = url.host_canonical();
+    if l.parent.is_none() && l.path != host_canon {
+        l.parent = Some(host_canon.clone());
+    }
+    // Name: last canonical segment — splitting on the archive marker too, so
+    // inside an archive the innermost folder (not "x.zip!docs") is the name.
+    l.name = match l.path.strip_prefix(&format!("{host_canon}/")) {
+        Some(rest) => rest
+            .rsplit(['/', '!'])
+            .find(|s| !s.is_empty())
+            .unwrap_or(&url.host)
+            .to_string(),
+        None => url.host.clone(),
+    };
+    Ok(l)
+}
+
+#[cfg(not(windows))]
+fn smb_list(_path: &str, _child: Option<String>, _home: Option<PathBuf>) -> Result<Listing, String> {
+    Err(smb::NOT_SUPPORTED.into())
 }
 
 #[tauri::command]
@@ -229,6 +307,7 @@ pub fn home_dir(app: tauri::AppHandle) -> Result<String, String> {
 /// folder changes on disk). Read-only stat; None if the dir is gone/unreadable.
 #[tauri::command]
 pub fn dir_mtime(path: String) -> Option<u64> {
+    let path = smb::localize(&path);
     // Inside an archive the archive file's own mtime is the answer: its contents
     // can't change without the file changing.
     let target = match Loc::parse(&path) {
@@ -251,6 +330,12 @@ pub fn dir_mtime(path: String) -> Option<u64> {
 /// notice in-place edits. Read-only; None if the dir is gone/unreadable.
 #[tauri::command]
 pub fn dir_signature(path: String) -> Option<u64> {
+    // Remote: polling a listing every 1.5 s would be chatty over the network
+    // (the frontend also skips these paths); navigation refreshes instead.
+    if sftp::is_sftp(&path) {
+        return None;
+    }
+    let path = smb::localize(&path);
     // An archive's contents are immutable while the file is unchanged, so the
     // watcher's poll costs a single stat here instead of stat-ing every entry.
     if let Loc::Archive { archive, inner } = Loc::parse(&path) {
@@ -321,12 +406,18 @@ pub struct TextFile {
 /// reports back whether it truncated or the content looked binary.
 #[tauri::command]
 pub async fn read_text_file(dir: String, name: String, max_bytes: usize) -> Result<TextFile, String> {
+    if sftp::is_sftp(&dir) {
+        let cap = max_bytes.max(1);
+        let (buf, truncated) = sftp::read_file(&dir, &name, cap).await?;
+        return Ok(text_file(buf, truncated, cap));
+    }
     tauri::async_runtime::spawn_blocking(move || {
         use std::io::Read;
+        let dir = smb::localize(&dir);
         let cap = max_bytes.max(1);
         // Inside an archive the member is decompressed straight into memory —
         // the preview works without ever writing a temp file.
-        let (mut buf, mut truncated) = match Loc::parse(&dir) {
+        let (buf, truncated) = match Loc::parse(&dir) {
             Loc::Archive { archive, inner } => {
                 let member = archive::normalize_inner(&format!("{inner}/{name}"));
                 archive::read_member(&archive, &member, cap)?
@@ -344,27 +435,96 @@ pub async fn read_text_file(dir: String, name: String, max_bytes: usize) -> Resu
                 (buf, truncated)
             }
         };
-        if truncated {
-            buf.truncate(cap);
-        }
-        truncated = truncated || buf.len() > cap;
-        // A NUL byte in the sniffed prefix is the classic "this is binary" tell.
-        if buf.contains(&0) {
-            return Ok(TextFile { text: String::new(), truncated, binary: true });
-        }
-        match String::from_utf8(buf) {
-            Ok(text) => Ok(TextFile { text, truncated, binary: false }),
-            // Lossy-decode invalid UTF-8 (e.g. latin-1) rather than fail outright,
-            // but flag it so the caller can fall back to the plain preview.
-            Err(e) => Ok(TextFile {
-                text: String::from_utf8_lossy(e.as_bytes()).into_owned(),
-                truncated,
-                binary: true,
-            }),
-        }
+        Ok(text_file(buf, truncated, cap))
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Decide what the preview shows for some bytes: text, truncated text, or
+/// "binary" (the caller then falls back to a thumbnail/icon). Shared by the
+/// local, in-archive and remote readers so all three behave identically.
+fn text_file(mut buf: Vec<u8>, truncated: bool, cap: usize) -> TextFile {
+    let truncated = truncated || buf.len() > cap;
+    if buf.len() > cap {
+        buf.truncate(cap);
+    }
+    // A NUL byte in the sniffed prefix is the classic "this is binary" tell.
+    if buf.contains(&0) {
+        return TextFile { text: String::new(), truncated, binary: true };
+    }
+    match String::from_utf8(buf) {
+        Ok(text) => TextFile { text, truncated, binary: false },
+        // Lossy-decode invalid UTF-8 (e.g. latin-1) rather than fail outright,
+        // but flag it so the caller can fall back to the plain preview.
+        Err(e) => TextFile {
+            text: String::from_utf8_lossy(e.as_bytes()).into_owned(),
+            truncated,
+            binary: true,
+        },
+    }
+}
+
+/// A file's bytes, base64'd for the IPC hop (a JSON array of numbers would be
+/// ~6x larger). Powers the PDF preview for files with no local path.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BinaryFile {
+    data: String,
+    /// The file was longer than the cap — the caller must NOT render this,
+    /// since a truncated PDF is a corrupt one.
+    truncated: bool,
+}
+
+/// Read a whole (small) file for embedding in the webview. Used where there is
+/// no local path to hand the asset protocol: inside archives and over SFTP.
+/// Capped, and honest about hitting the cap.
+#[tauri::command]
+pub async fn read_file_bytes(dir: String, name: String, max_bytes: usize) -> Result<BinaryFile, String> {
+    use base64::Engine;
+    let cap = max_bytes.max(1);
+    let (buf, truncated) = if sftp::is_sftp(&dir) {
+        sftp::read_file(&dir, &name, cap).await?
+    } else {
+        tauri::async_runtime::spawn_blocking(move || {
+            use std::io::Read;
+            let dir = smb::localize(&dir);
+            match Loc::parse(&dir) {
+                Loc::Archive { archive, inner } => {
+                    let member = archive::normalize_inner(&format!("{inner}/{name}"));
+                    archive::read_member(&archive, &member, cap)
+                }
+                Loc::Local(d) => {
+                    let file = fs::File::open(d.join(&name)).map_err(|e| friendly_io(&e))?;
+                    let mut buf = Vec::new();
+                    // +1 over the cap so "exactly cap" and "longer" are distinct.
+                    file.take(cap as u64 + 1)
+                        .read_to_end(&mut buf)
+                        .map_err(|e| friendly_io(&e))?;
+                    let truncated = buf.len() > cap;
+                    Ok((buf, truncated))
+                }
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())??
+    };
+    if truncated {
+        return Ok(BinaryFile { data: String::new(), truncated: true });
+    }
+    Ok(BinaryFile {
+        data: base64::engine::general_purpose::STANDARD.encode(&buf),
+        truncated: false,
+    })
+}
+
+/// The OS-native form of a path, for the places that need a real filesystem
+/// path rather than Delight's portable one — today just the asset protocol,
+/// which serves the PDF preview. smb:// becomes a UNC path; everything else
+/// passes through unchanged.
+#[tauri::command]
+pub fn native_path(path: String) -> String {
+    smb::localize(&path)
 }
 
 #[derive(Serialize)]
@@ -379,7 +539,11 @@ pub struct DiskSpace {
 /// path can't be queried.
 #[tauri::command]
 pub async fn disk_space(path: String) -> Option<DiskSpace> {
+    if sftp::is_sftp(&path) {
+        return None; // no statvfs in base SFTP; the readout just hides
+    }
     tauri::async_runtime::spawn_blocking(move || {
+        let path = smb::localize(&path);
         // Meaningless inside an archive — the UI already handles None.
         if Loc::parse(&path).is_archive() {
             return None;
@@ -402,6 +566,12 @@ pub async fn disk_space(path: String) -> Option<DiskSpace> {
 /// can't trap the walk. Runs off the UI thread; can be slow for large trees.
 #[tauri::command]
 pub async fn dir_size(path: String) -> u64 {
+    // A recursive size walk over SFTP is a round trip per directory; not worth
+    // it for a column value. Remote folders show no total in v1.
+    if sftp::is_sftp(&path) {
+        return 0;
+    }
+    let path = smb::localize(&path);
     tauri::async_runtime::spawn_blocking(move || match Loc::parse(&path) {
         // Free from the index — no walk, no decompression.
         Loc::Archive { archive, inner } => archive::index_for(&archive)
@@ -429,6 +599,53 @@ fn walk_size(dir: &Path) -> u64 {
         }
     }
     total
+}
+
+/// End-to-end SMB listing against this machine's own shares. Environment-
+/// dependent (needs the Server service and at least one visible share), so it's
+/// #[ignore]d — run with `cargo test -- --ignored`. It exists because unit-testing
+/// delocalize alone did NOT catch the real bug: dunce::canonicalize only
+/// simplifies verbatim DISK paths, so a share came back as \\?\UNC\host\share
+/// and leaked into the path bar. Only a listing of a REAL share exercises that.
+#[cfg(all(test, windows))]
+mod smb_e2e_tests {
+    use super::smb_list;
+
+    #[test]
+    #[ignore]
+    fn share_listings_stay_in_smb_form() {
+        let host = smb_list("smb://localhost", None, None).expect("host-level listing");
+        assert_eq!(host.path, "smb://localhost");
+        let Some(share) = host.entries.iter().find(|e| !e.hidden) else {
+            eprintln!("no visible share on localhost — skipping");
+            return;
+        };
+        // Enter the share both ways the UI can: as a child, and as a full path.
+        for l in [
+            smb_list("smb://localhost", Some(share.name.clone()), None).expect("child entry"),
+            smb_list(&format!("smb://localhost/{}", share.name), None, None).expect("full path"),
+        ] {
+            assert!(
+                l.path.starts_with("smb://localhost/"),
+                "listing path must stay canonical, got {}",
+                l.path
+            );
+            assert!(!l.path.contains('\\'), "no UNC/backslashes in {}", l.path);
+            assert_eq!(l.parent.as_deref(), Some("smb://localhost"));
+            assert_eq!(l.name, share.name);
+        }
+        // One level deeper — the exact shape that leaked \\?\UNC\… to the path
+        // bar (a folder INSIDE a share, which is where canonicalize kicks in).
+        let root = smb_list(&format!("smb://localhost/{}", share.name), None, None).unwrap();
+        let Some(sub) = root.entries.iter().find(|e| e.is_dir && !e.hidden) else {
+            eprintln!("no subfolder in {} — skipping the deep check", share.name);
+            return;
+        };
+        let deep = smb_list(&root.path, Some(sub.name.clone()), None).expect("subfolder listing");
+        assert_eq!(deep.path, format!("smb://localhost/{}/{}", share.name, sub.name));
+        assert_eq!(deep.parent.as_deref(), Some(root.path.as_str()));
+        assert_eq!(deep.name, sub.name);
+    }
 }
 
 #[cfg(all(test, windows))]

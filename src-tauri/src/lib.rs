@@ -1,4 +1,4 @@
-mod actions;
+﻿mod actions;
 mod archive;
 mod details;
 mod fs_cmds;
@@ -7,9 +7,11 @@ mod menu;
 mod ops;
 mod roots;
 mod settings;
+mod sftp;
+mod smb;
 
 /// The window starts hidden (`visible: false` in tauri.conf.json) and the
-/// frontend calls this once it has fully rendered — otherwise the webview's
+/// frontend calls this once it has fully rendered â€” otherwise the webview's
 /// default white background flashes for the first few hundred ms while the page
 /// loads. See the double-rAF `show_main_window` call at the end of main.ts init.
 #[tauri::command]
@@ -23,7 +25,7 @@ pub fn run() {
         .plugin(tauri_plugin_drag::init())
         // Remembers window size/position across launches (see first-run sizing
         // below). VISIBLE is excluded: restoring it would show the window during
-        // setup, before the webview has painted — the exact white flash that
+        // setup, before the webview has painted â€” the exact white flash that
         // `visible: false` prevents. The frontend reveals the window itself.
         .plugin(
             tauri_plugin_window_state::Builder::default()
@@ -35,10 +37,13 @@ pub fn run() {
         )
         .invoke_handler(tauri::generate_handler![
             fs_cmds::list_dir,
+            smb::smb_login,
             fs_cmds::home_dir,
             fs_cmds::dir_mtime,
             fs_cmds::dir_signature,
             fs_cmds::read_text_file,
+            fs_cmds::read_file_bytes,
+            fs_cmds::native_path,
             fs_cmds::disk_space,
             fs_cmds::dir_size,
             ops::copy_entries,
@@ -93,7 +98,7 @@ pub fn run() {
 
             // Failsafe for the hidden start: if the frontend dies before it can
             // call show_main_window (JS error, asset failure), reveal the window
-            // anyway after a beat — a broken page beats an invisible app.
+            // anyway after a beat â€” a broken page beats an invisible app.
             if let Some(win) = app.get_webview_window("main") {
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(3));

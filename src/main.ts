@@ -215,6 +215,8 @@ class App {
       sortSize: () => this.activePane()?.cycleSort("size"),
       sortCreated: () => this.activePane()?.cycleSort("created"),
       sortModified: () => this.activePane()?.cycleSort("modified"),
+      focusPath: () => this.activePane()?.focusPathBar(),
+      connectNetwork: () => void this.activePane()?.openConnect(),
       viewList: () => this.activePane()?.setView("list"),
       viewChips: () => this.activePane()?.setView("chips"),
       viewGrid: () => this.activePane()?.setView("grid"),

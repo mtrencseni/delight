@@ -50,6 +50,27 @@ fn split_ext(name: &str, is_dir: bool) -> Option<String> {
 
 #[tauri::command]
 pub async fn item_details(dir: String, name: Option<String>) -> Result<Details, String> {
+    // Remote: what SFTP can answer (permissions, child preview). Creation time,
+    // owner names and "opens with" have no remote equivalent and stay empty.
+    if crate::sftp::is_sftp(&dir) {
+        let info = crate::sftp::info(&dir, name.as_deref(), 9).await?;
+        return Ok(Details {
+            permissions: info.permissions,
+            dir_count: info.dir_count,
+            children: info
+                .children
+                .into_iter()
+                .map(|(n, is_dir, is_symlink)| ChildEntry {
+                    ext: split_ext(&n, is_dir),
+                    name: n,
+                    is_dir,
+                    is_symlink,
+                })
+                .collect(),
+            ..Default::default()
+        });
+    }
+    let dir = crate::smb::localize(&dir);
     // Inside an archive there is nothing on disk to stat, so the same details are
     // assembled from the index instead.
     if let Loc::Archive { archive, inner } = Loc::parse(&dir) {
@@ -214,7 +235,7 @@ pub async fn file_thumbnail(
     name: Option<String>,
     size: u32,
 ) -> Result<Option<String>, String> {
-    let p = join(dir, name);
+    let p = join(crate::smb::localize(&dir), name);
     tauri::async_runtime::spawn_blocking(move || thumbnail(&p, size))
         .await
         .map_err(|e| e.to_string())

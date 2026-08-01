@@ -17,7 +17,7 @@ fn join(dir: String, name: Option<String>) -> PathBuf {
 /// application" dialog when no default is registered.
 #[tauri::command]
 pub fn open_path(dir: String, name: Option<String>) -> Result<(), String> {
-    let p = join(dir, name);
+    let p = join(crate::smb::localize(&dir), name);
     open_native(&p)
 }
 

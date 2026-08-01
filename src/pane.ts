@@ -21,10 +21,14 @@ import {
   archiveFileFor,
   askArchivePassword,
   displayPath,
+  inArchive,
   isArchiveName,
   needsPassword,
   parseDisplayPath,
 } from "./archive";
+import { isSmbPath, smbAuthNeeded, smbParse } from "./smb";
+import { canonicalSftp, isRemotePath, isSftpPath } from "./sftp";
+import { connectDialog, credentialsDialog } from "./dialog";
 import { toast } from "./toast";
 
 const UP_ENTRY: Entry = {
@@ -130,6 +134,11 @@ export class PaneView {
   private host: PaneHost;
   private pathInput: HTMLInputElement;
   private diskEl: HTMLElement;
+  private netBtn: HTMLButtonElement;
+  /** Recent-path autocomplete: the dropdown, its entries, and the highlight. */
+  private acEl: HTMLElement;
+  private acItems: string[] = [];
+  private acIndex = -1;
   private errBox: HTMLElement;
   private header: HTMLElement;
   private scroller: HTMLElement;
@@ -227,7 +236,17 @@ export class PaneView {
     // "D:\" path (instead of being pushed to the far right) while the view buttons
     // stay pinned right.
     const pathgap = div("pathgap");
-    bar.append(this.pathInput, this.diskEl, pathgap, this.viewSeg, this.locBtn);
+    // Recent-path suggestions, positioned under the input (the bar is the
+    // positioning context). Hidden until typing produces a prefix match.
+    this.acEl = div("pathac hidden");
+    // Connect-to-server, sat left of the view buttons: it acts on where this
+    // pane is pointed, like they do.
+    this.netBtn = document.createElement("button");
+    this.netBtn.className = "tbtn netbtn";
+    this.netBtn.innerHTML = icons.network;
+    this.netBtn.title = "Connect to a server";
+    this.netBtn.addEventListener("click", () => void this.openConnect());
+    bar.append(this.pathInput, this.diskEl, pathgap, this.netBtn, this.viewSeg, this.locBtn, this.acEl);
 
     this.errBox = div("pane-error hidden");
 
@@ -287,17 +306,57 @@ export class PaneView {
       this.el.classList.remove("kb-nav");
     });
 
+    // Typing filters the recent-paths list; focus/blur drive the "editing"
+    // layout (see setEditing) so the disk readout gets out of the way.
+    this.pathInput.addEventListener("input", () => this.updateAutocomplete());
+    this.pathInput.addEventListener("focus", () => this.setEditing(true));
+
     this.pathInput.addEventListener("keydown", (e) => {
+      // The suggestion list owns the arrows and Tab while it's open.
+      if (this.acItems.length) {
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault();
+          const n = this.acItems.length;
+          const d = e.key === "ArrowDown" ? 1 : -1;
+          // Cycle through -1 (nothing highlighted, i.e. what you typed) and
+          // 0..n-1, so arrowing past either end returns you to your own text.
+          this.acIndex = (this.acIndex + 1 + d + n + 1) % (n + 1) - 1;
+          this.paintAutocomplete();
+          return;
+        }
+        if (e.key === "Tab") {
+          // Tab completes to the highlighted (or first) suggestion without
+          // navigating, so a long path can be extended further.
+          e.preventDefault();
+          this.pathInput.value = this.acItems[Math.max(0, this.acIndex)];
+          this.updateAutocomplete();
+          return;
+        }
+        if (e.key === "Escape") {
+          // First Escape dismisses the list; a second restores and blurs.
+          e.preventDefault();
+          this.hideAutocomplete();
+          return;
+        }
+        if (e.key === "Enter" && this.acIndex >= 0) {
+          this.pathInput.value = this.acItems[this.acIndex];
+          this.hideAutocomplete();
+          // fall through to the normal Enter handling below
+        }
+      }
       if (e.key === "Enter") {
-        // Re-insert the archive marker if the typed path walks into one.
-        const v = parseDisplayPath(toSystemSep(this.pathInput.value.trim(), state.settings.pathSep));
-        if (v) this.navigate(v).then((ok) => ok && this.pathInput.blur());
+        this.hideAutocomplete();
+        void this.commitPathInput();
       } else if (e.key === "Escape") {
         this.resetPathInput();
         this.pathInput.blur();
       }
     });
-    this.pathInput.addEventListener("blur", () => this.resetPathInput());
+    this.pathInput.addEventListener("blur", () => {
+      this.setEditing(false);
+      this.hideAutocomplete();
+      this.resetPathInput();
+    });
 
     // Manual double-click detection (native dblclick is unreliable over
     // virtualized DOM). Works for both list rows and grid tiles.
@@ -344,7 +403,10 @@ export class PaneView {
 
   private async checkDirChanged(): Promise<void> {
     const path = this.st.path;
-    if (!path) return;
+    // No polling over the network: a listing every 1.5 s is the kind of chatter
+    // NAS logs are full of, and over SFTP it's a round trip. Remote panes
+    // refresh on navigation only.
+    if (!path || isSmbPath(path) || isRemotePath(path)) return;
     // Don't reload out from under an active interaction.
     if (document.activeElement === this.pathInput) return;
     const sig = await invoke<number | null>("dir_signature", { path }).catch(() => null);
@@ -620,6 +682,39 @@ export class PaneView {
     this.host.columnsChanged();
   }
 
+  /** The connect dialog builds a network path and hands it back; from there
+      it's an ordinary navigation — so SMB sign-in, ssh:// aliasing and error
+      reporting all come from the one path they already come from. The built
+      path lands in the bar first, so a failure leaves it there to edit. */
+  async openConnect(): Promise<void> {
+    const built = await connectDialog({ recents: this.recentRemotePaths() });
+    if (!built) return;
+    this.pathInput.value = built;
+    await this.commitPathInput();
+  }
+
+  /** Remote paths from the visited cache, newest first, one per server — a
+      list of every share is noise when you're picking a machine to connect to. */
+  private recentRemotePaths(): string[] {
+    const seen = new Set<string>();
+    return state.visited
+      .filter((v) => isSmbPath(v.path) || isSftpPath(v.path))
+      .sort((a, b) => b.last - a.last)
+      .filter((v) => {
+        const authority = v.path.split("/").slice(0, 3).join("/");
+        return !seen.has(authority) && seen.add(authority);
+      })
+      .map((v) => v.path);
+  }
+
+  /** ⌘L / Ctrl+L: put the caret in this pane's path bar with the path selected,
+      so typing replaces it — the browser address-bar gesture. Escape or blur
+      puts the displayed path back (resetPathInput). */
+  focusPathBar(): void {
+    this.pathInput.focus();
+    this.pathInput.select();
+  }
+
   /** Rebuild header + rows when the visible columns change (settings toggle). */
   refreshColumns(): void {
     this.buildHeader();
@@ -696,6 +791,100 @@ export class PaneView {
     this.hideError();
   }
 
+  /** Go where the path bar says. Shared by Enter and by clicking a suggestion,
+      so both honor the scheme-specific handling (smb sign-in, ssh:// aliasing,
+      archive markers) rather than one of them quietly taking a shortcut. */
+  private async commitPathInput(): Promise<void> {
+    const raw = this.pathInput.value.trim();
+    // smb:// URLs stay in their canonical '/' form — no separator settings
+    // apply. An inline password is used once to sign in, then dropped.
+    if (isSmbPath(raw)) {
+      if (await this.navigateSmbInput(raw)) this.pathInput.blur();
+      return;
+    }
+    // sftp:// (and its ssh:// alias) — canonicalized, then handed over as-is.
+    if (isSftpPath(raw)) {
+      if (await this.navigate(canonicalSftp(raw))) this.pathInput.blur();
+      return;
+    }
+    // Re-insert the archive marker if the typed path walks into one.
+    const v = parseDisplayPath(toSystemSep(raw, state.settings.pathSep));
+    if (v && (await this.navigate(v))) this.pathInput.blur();
+  }
+
+  // ---- path bar: editing mode + recent-path autocomplete ----------------------
+
+  /** While the path bar has focus it gets the whole width: the drive-root disk
+      readout and the spacer that hugs a short "D:\" would otherwise squeeze the
+      field down to a few characters exactly when you need room to type. */
+  private setEditing(on: boolean): void {
+    const bar = this.pathInput.parentElement;
+    bar?.classList.toggle("editing", on);
+    if (on) {
+      // The explicit size (set at a drive root) would cap the field even with
+      // flex:1; drop it while editing and restore it on the way out.
+      this.pathInput.removeAttribute("size");
+    } else if (bar?.classList.contains("at-root")) {
+      this.pathInput.size = Math.max(this.displayedPath(this.st.path).length, 4);
+    }
+  }
+
+  /** Recompute the suggestion list from what's typed. Prefix match, so it
+      completes a path rather than searching — case-insensitive, because
+      Windows paths and host names are. */
+  private updateAutocomplete(): void {
+    const typed = this.pathInput.value.trim();
+    const q = typed.toLowerCase();
+    this.acItems = [];
+    this.acIndex = -1;
+    if (q.length >= 2) {
+      const seen = new Set<string>();
+      this.acItems = state.visited
+        .filter((v) => {
+          const p = this.displayedPath(v.path);
+          // Skip the exact text (nothing to complete) and duplicates that
+          // differ only in how they're displayed.
+          return p.toLowerCase().startsWith(q) && p.toLowerCase() !== q && !seen.has(p) && seen.add(p);
+        })
+        // Most recently visited first — the likeliest completion.
+        .sort((a, b) => b.last - a.last)
+        .slice(0, 8)
+        .map((v) => this.displayedPath(v.path));
+    }
+    this.paintAutocomplete();
+  }
+
+  private paintAutocomplete(): void {
+    if (!this.acItems.length) {
+      this.acEl.classList.add("hidden");
+      this.acEl.replaceChildren();
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    this.acItems.forEach((p, i) => {
+      const row = div("pathac-item" + (i === this.acIndex ? " on" : ""));
+      row.textContent = p;
+      // mousedown, not click: click fires after blur, which would already have
+      // torn the list down and reset the field.
+      row.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        this.pathInput.value = p;
+        this.hideAutocomplete();
+        void this.commitPathInput();
+      });
+      frag.append(row);
+    });
+    this.acEl.replaceChildren(frag);
+    this.acEl.classList.remove("hidden");
+  }
+
+  private hideAutocomplete(): void {
+    this.acItems = [];
+    this.acIndex = -1;
+    this.acEl.classList.add("hidden");
+    this.acEl.replaceChildren();
+  }
+
   /** Re-render just the path-bar text (after the path-separator setting changes). */
   refreshPathBar(): void {
     if (document.activeElement !== this.pathInput) {
@@ -705,15 +894,21 @@ export class PaneView {
 
   /** When the current folder is a drive root, show total/used/free next to the
       path bar; otherwise hide it. Fetched lazily and ignored if we navigate away. */
+  /** Drop the disk readout and the at-root layout it brings with it. Called
+      when leaving a drive root — including at the START of a navigation, since
+      a slow (remote) one would otherwise leave the new path in a 4-character
+      field beside the old drive's usage. */
+  private clearDiskInfo(): void {
+    this.diskEl.classList.add("hidden");
+    this.diskEl.textContent = "";
+    this.pathInput.parentElement?.classList.remove("at-root");
+    this.pathInput.removeAttribute("size");
+  }
+
   private updateDiskInfo(): void {
     const path = this.st.path;
     const bar = this.pathInput.parentElement;
-    const clear = () => {
-      this.diskEl.classList.add("hidden");
-      this.diskEl.textContent = "";
-      bar?.classList.remove("at-root");
-      this.pathInput.removeAttribute("size");
-    };
+    const clear = () => this.clearDiskInfo();
     if (!isDriveRoot(path)) {
       clear();
       return;
@@ -748,6 +943,12 @@ export class PaneView {
   /** Navigate to `path` (or `path`/`child`). Resolves true on success. */
   async navigate(path: string, child?: string, focusName?: string, retried = false): Promise<boolean> {
     this.closeFind(); // matches refer to the listing we're leaving
+    // The disk readout belongs to the folder we're leaving, and the at-root
+    // layout it brings shrinks the path bar to a few characters. Drop both up
+    // front: a remote connection can take a second or two, and until now that
+    // second showed an sftp:// path sitting beside C:'s disk usage in a stub of
+    // a field. Restored below if the navigation fails and we stay put.
+    this.clearDiskInfo();
     try {
       const l = await invoke<Listing>("list_dir", { path, child: child ?? null });
       this.st.path = l.path;
@@ -767,6 +968,10 @@ export class PaneView {
       this.host.changed();
       return true;
     } catch (e) {
+      // We didn't move, so the readout cleared above still describes where we
+      // are — put it back. (The retry paths recurse into navigate, which
+      // clears again on its own.)
+      this.updateDiskInfo();
       // An encrypted archive: ask once, then retry with the password in place.
       if (!retried && needsPassword(e)) {
         const file = archiveFileFor(path, child);
@@ -776,8 +981,64 @@ export class PaneView {
         }
         return false;
       }
+      // An SMB server wants credentials: sign in, then retry.
+      if (!retried && smbAuthNeeded(e)) {
+        if (await this.smbSignIn(path)) {
+          return this.navigate(path, child, focusName, true);
+        }
+        return false;
+      }
       this.showError(String(e));
       return false;
+    }
+  }
+
+  /** Navigate to a typed smb:// URL. An inline password (smb://user:pass@host)
+      signs in first and is then dropped — only the canonical, password-less
+      form ever reaches the pane state, the path bar, or persistence. */
+  private async navigateSmbInput(raw: string): Promise<boolean> {
+    const smb = smbParse(raw);
+    if (!smb) {
+      this.showError("Not a valid smb:// path");
+      return false;
+    }
+    if (smb.password) {
+      try {
+        await invoke("smb_login", {
+          host: smb.host,
+          user: smb.user ?? "",
+          password: smb.password,
+        });
+      } catch (e) {
+        this.showError(String(e));
+        return false;
+      }
+    }
+    return this.navigate(parseDisplayPath(smb.canonical));
+  }
+
+  /** The sign-in loop for a server that answered "credentials required":
+      dialog → smb_login → retry, with the failure as the next attempt's hint.
+      Wrong credentials fail at smb_login, so nothing broken is ever cached. */
+  private async smbSignIn(path: string): Promise<boolean> {
+    const smb = smbParse(path);
+    if (!smb) return false;
+    let user = smb.user ?? "";
+    let hint = "";
+    for (;;) {
+      const cred = await credentialsDialog({
+        title: `Sign in to ${smb.host}`,
+        message: hint || "This server needs a user name and password.",
+        user,
+      });
+      if (!cred) return false;
+      user = cred.user;
+      try {
+        await invoke("smb_login", { host: smb.host, user: cred.user, password: cred.password });
+        return true;
+      } catch (e) {
+        hint = String(e);
+      }
     }
   }
 
@@ -807,8 +1068,12 @@ export class PaneView {
   }
 
   /** A path as shown in the path bar: the archive marker becomes an ordinary
-      separator, then the usual slash-style setting is applied. */
+      separator, then the usual slash-style setting is applied. smb:// paths
+      are exempt — their canonical '/' form IS the display form on every OS. */
   private displayedPath(p: string): string {
+    // URL forms are already canonical and '/'-separated on every OS — the
+    // path-separator setting is about local paths and must not rewrite them.
+    if (isSmbPath(p) || isSftpPath(p)) return displayPath(p);
     return withSep(displayPath(p), state.settings.pathSep);
   }
 
@@ -2273,7 +2538,7 @@ export class PaneView {
     // only; the browser mock has no asset protocol, so PDFs fall through to the
     // thumbnail path below there.
     if (isTauri && entry !== UP_ENTRY && !entry.isDir && /\.pdf$/i.test(entry.name)) {
-      this.showPdfPreview(entry, dirPath);
+      this.showPdfPreview(entry, dirPath, key);
       return;
     }
 
@@ -2408,16 +2673,79 @@ export class PaneView {
   /** Embed a PDF in the preview pane via the webview's own PDF viewer (WebView2
       on Windows, WKWebView on macOS), loaded straight from disk through the asset
       protocol — crisp and scrollable, unlike the OS thumbnail. */
-  private showPdfPreview(entry: Entry, dirPath: string): void {
+  /** Largest PDF fetched into memory for the blob path. A truncated PDF is a
+      corrupt one, so past this the pane says so rather than showing a broken
+      viewer. Files with a real local path stream through the asset protocol
+      instead and have no such limit. */
+  private static PDF_MAX_BYTES = 64 * 1024 * 1024;
+
+  /** The blob URL currently backing the PDF frame, revoked when replaced. */
+  private pdfBlobUrl: string | null = null;
+
+  private showPdfPreview(entry: Entry, dirPath: string, key: string): void {
     this.detachCodePreview();
-    const sep = dirPath.includes("\\") ? "\\" : "/";
-    const full = dirPath.replace(/[\\/]+$/, "") + sep + entry.name;
     const frame = document.createElement("iframe");
     frame.className = "pp-pdf";
-    frame.src = assetUrl(full);
     this.previewEl.replaceChildren(frame);
     this.previewEl.classList.remove("hidden");
     this.el.classList.add("previewing");
+
+    // Inside an archive or over SFTP there is no file for the OS to open, so
+    // the asset protocol can't serve it. Fetch the bytes through the same
+    // reader the code preview uses and hand the webview a blob — no temp file,
+    // which keeps the "nothing is ever materialized behind your back" rule.
+    if (inArchive(dirPath) || isSftpPath(dirPath)) {
+      void invoke<{ data: string; truncated: boolean }>("read_file_bytes", {
+        dir: dirPath,
+        name: entry.name,
+        maxBytes: PaneView.PDF_MAX_BYTES,
+      })
+        .then((res) => {
+          if (this.previewKey !== key) return; // cursor moved on
+          if (res.truncated) {
+            this.showPdfMessage("Too large to preview here — copy it out first (F5)");
+            return;
+          }
+          const bytes = Uint8Array.from(atob(res.data), (c) => c.charCodeAt(0));
+          this.setPdfBlob(frame, new Blob([bytes], { type: "application/pdf" }));
+        })
+        .catch((e) => {
+          if (this.previewKey === key) this.showPdfMessage(String(e));
+        });
+      return;
+    }
+
+    // A real path (local, or an SMB share once translated to its UNC form):
+    // the asset protocol streams it, so size doesn't matter.
+    void invoke<string>("native_path", { path: dirPath })
+      .catch(() => dirPath)
+      .then((native) => {
+        if (this.previewKey !== key) return;
+        const sep = native.includes("\\") ? "\\" : "/";
+        frame.src = assetUrl(native.replace(/[\\/]+$/, "") + sep + entry.name);
+      });
+  }
+
+  private setPdfBlob(frame: HTMLIFrameElement, blob: Blob): void {
+    this.releasePdfBlob();
+    this.pdfBlobUrl = URL.createObjectURL(blob);
+    frame.src = this.pdfBlobUrl;
+  }
+
+  private releasePdfBlob(): void {
+    if (this.pdfBlobUrl) URL.revokeObjectURL(this.pdfBlobUrl);
+    this.pdfBlobUrl = null;
+  }
+
+  /** Replace the PDF frame with a plain explanation (too big, unreadable, …). */
+  private showPdfMessage(msg: string): void {
+    this.releasePdfBlob();
+    const stage = div("pp-stage");
+    const info = div("pp-info");
+    const note = div("pp-name");
+    note.textContent = msg;
+    info.append(note);
+    this.previewEl.replaceChildren(stage, info);
   }
 
   /** Remove the code preview's editor from the DOM (kept alive for reuse). */
@@ -2432,6 +2760,7 @@ export class PaneView {
   hidePreview(): void {
     if (!this.isPreviewing()) return;
     clearTimeout(this.previewTimer);
+    this.releasePdfBlob(); // the frame is going away; don't leak its bytes
     this.previewKey = "";
     this.previewEl.classList.add("hidden");
     this.el.classList.remove("previewing", "code-preview");
