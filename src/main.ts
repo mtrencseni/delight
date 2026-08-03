@@ -232,6 +232,7 @@ class App {
       toggleHidden: () => this.toggleHidden(),
       keyboardMap: () => toggleKeyboardMap(),
       preview: () => this.doPreview(),
+      desktopNewest: () => void this.showNewestOnDesktop(),
       closePreview: () => this.closePanePreview(),
       devtools: () => {
         if (state.settings.devTools) void invoke("toggle_devtools").catch(() => {});
@@ -1488,6 +1489,43 @@ class App {
       this.previewPane = p;
       p.previewCursor();
     }
+  }
+
+  /** Show the cursor item. Unlike doPreview this never closes anything — it's
+      for callers that mean "and now let me see it", where toggling off would be
+      the opposite of what was asked. */
+  private showPreviewFor(p: PaneView): void {
+    if (!state.settings.previewPane) {
+      this.previewPane = p;
+      p.previewCursor();
+      return;
+    }
+    // An open preview driven by the OTHER pane is showing the wrong cursor;
+    // close it so it reopens against this one.
+    if (this.previewSource && this.previewSource !== p) this.closePanePreview();
+    if (this.previewTarget) this.refreshPanePreview();
+    else this.togglePanePreview(p);
+  }
+
+  /** ⌥S: the Desktop, newest file first, cursor on it, preview open.
+      Built for the screenshot-then-drag flow — take a shot, ⌥S, drag it out —
+      which is otherwise four separate moves. */
+  private async showNewestOnDesktop(): Promise<void> {
+    const p = this.activePane();
+    if (!p) return;
+    const desktop = await invoke<string>("desktop_dir").catch(() => "");
+    if (!desktop) {
+      toast("Couldn't find the Desktop folder");
+      return;
+    }
+    if (!(await p.navigate(desktop))) return; // navigate() already showed why
+    // -1 is descending: the comparator subtracts, so newest sorts to the top.
+    p.setSort("modified", -1);
+    if (!p.focusNewestFile()) {
+      toast("No files on the Desktop");
+      return;
+    }
+    this.showPreviewFor(p);
   }
 
   /** ⌘1 / ⌘2: open the left/right pane's Favorites dropdown. */

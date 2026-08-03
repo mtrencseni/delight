@@ -320,6 +320,18 @@ pub fn home_dir(app: tauri::AppHandle) -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
+/// The user's Desktop. Asked of the OS rather than joined onto the home
+/// directory: the folder is localized, and Windows lets it be redirected —
+/// OneDrive does exactly that by default — so `<home>/Desktop` is often simply
+/// the wrong place, or no place at all.
+#[tauri::command]
+pub fn desktop_dir(app: tauri::AppHandle) -> Result<String, String> {
+    app.path()
+        .desktop_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .map_err(|e| e.to_string())
+}
+
 /// A directory's modified time in epoch millis. Bumps whenever an entry is
 /// added or removed (used by the frontend to auto-refresh a pane when its
 /// folder changes on disk). Read-only stat; None if the dir is gone/unreadable.

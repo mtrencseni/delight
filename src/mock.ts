@@ -56,6 +56,15 @@ const root: MNode = d({
         "setup.sh": f(1204, 6),
       }),
       Pictures: d({ "wallpaper.png": f(2450233, 60) }),
+      // Shaped for the "newest on Desktop" shortcut: a fresh screenshot, an
+      // older one, a plain file, and a folder that is just as fresh as the
+      // screenshot — so the command has to skip folders to land on the .png.
+      Desktop: d({
+        "Screenshot 2026-08-03 at 15.04.11.png": f(184122, 0),
+        "Screenshot 2026-08-01 at 09.12.44.png": f(203441, 2),
+        "todo.txt": f(412, 5),
+        Scratch: d({}, 0),
+      }),
       Projects: d({
         delight: d({
           "README.md": f(1204, 0),
@@ -415,6 +424,8 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
       return listDir(String(args?.path ?? SEP), args?.child as string | null) as T;
     case "home_dir":
       return HOME as T;
+    case "desktop_dir":
+      return `${HOME}${SEP}Desktop` as T;
     case "file_icon":
       return null as T; // no system icons in the browser mock
     case "open_path":

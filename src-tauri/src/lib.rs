@@ -39,6 +39,7 @@ pub fn run() {
             fs_cmds::list_dir,
             smb::smb_login,
             fs_cmds::home_dir,
+            fs_cmds::desktop_dir,
             fs_cmds::dir_mtime,
             fs_cmds::dir_signature,
             fs_cmds::read_text_file,

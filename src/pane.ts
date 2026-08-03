@@ -1331,6 +1331,42 @@ export class PaneView {
     this.host.sortChanged(this.st.sortKey, this.st.sortDir);
   }
 
+  /** Sort by an exact key and direction. Unlike cycleSort, asking for the sort
+      you already have is a no-op rather than a reversal — a command that means
+      "newest first" has to land on newest first every time it's pressed. */
+  setSort(key: SortKey, dir: SortDir): void {
+    if (this.st.sortKey !== key || this.st.sortDir !== dir) {
+      this.st.sortKey = key;
+      this.st.sortDir = dir;
+      this.rebuild(true);
+      this.host.changed();
+    }
+    // Broadcast even when nothing changed here: the sibling pane may still be
+    // sorted differently, and linked sort is what reconciles them.
+    this.host.sortChanged(key, dir);
+  }
+
+  /** Put the cursor on the most recently modified FILE in this listing.
+      Folders are skipped deliberately — the flow this serves is "the screenshot
+      I just took", and a folder touched a moment ago (as `~/Desktop` often has)
+      would otherwise win. Returns false if there are no files to land on. */
+  focusNewestFile(): boolean {
+    let best = -1;
+    let newest = -Infinity;
+    this.view.forEach((r, i) => {
+      // Depth 0 only: an expanded tree row belongs to a subfolder, not here.
+      if (r.depth !== 0 || r.entry === UP_ENTRY || r.entry.isDir) return;
+      const at = r.entry.modifiedMs ?? -Infinity;
+      if (at > newest) {
+        newest = at;
+        best = i;
+      }
+    });
+    if (best < 0) return false;
+    this.setCursor(best);
+    return true;
+  }
+
   /** Adopt a sort from the sibling pane (linked-sort); no re-broadcast. */
   applySort(key: SortKey, dir: SortDir): void {
     if (this.st.sortKey === key && this.st.sortDir === dir) return;

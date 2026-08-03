@@ -23,6 +23,7 @@ export type CommandId =
   | "pageDown"
   | "cursorHome"
   | "cursorEnd"
+  | "desktopNewest"
   | "open"
   | "up"
   | "find"
@@ -106,6 +107,10 @@ export const COMMANDS: Command[] = [
   { id: "pageDown", label: "Page down", group: "Panes & navigation", defaults: ["PageDown"] },
   { id: "cursorHome", label: "Jump to top", short: "Top", group: "Panes & navigation", defaults: ["Home", `${MOD}+ArrowUp`] },
   { id: "cursorEnd", label: "Jump to bottom", short: "Bottom", group: "Panes & navigation", defaults: ["End", `${MOD}+ArrowDown`] },
+  // One key for the whole screenshot-then-drag flow: take a shot, ⌥S, drag it
+  // out of the pane. Goes to the Desktop, newest first, cursor on the newest
+  // file, preview open — see main.ts showNewestOnDesktop.
+  { id: "desktopNewest", label: "Newest file on the Desktop", short: "Desktop", group: "Panes & navigation", defaults: ["Alt+KeyS"] },
   { id: "open", label: "Open", group: "Panes & navigation", defaults: ["Enter"] },
   { id: "up", label: "Go up a folder", short: "Up a folder", group: "Panes & navigation", defaults: ["Backspace"] },
   // Quick-search inside the active pane. Binding it here is also what stops the
