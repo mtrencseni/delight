@@ -156,6 +156,28 @@ into a sibling folder named after the archive in single-pane mode (`aaa.zip` →
 `aaa`, then `aaa-1` if taken). One packing format, zip, no encryption: the
 goal is "send someone a folder," not an archiver.
 
+### Network locations
+
+Two protocols reach off the machine, both addressed the same way everywhere:
+`smb://server/share` and `sftp://user@host/path`. One portable form is the
+point — a favorite saved on Windows opens on the Mac, and the pane never shows
+you a `\\server\share` or a `/Volumes/…` path, because those are the OS's
+business, not yours.
+
+SFTP is spoken over the system `ssh` binary rather than an in-process SSH
+stack. That inherits `~/.ssh/config`, agent keys, `known_hosts` and ProxyJump
+for free, and — more importantly — leaves host-key verification, the thing
+standing between you and a man-in-the-middle, inside the most audited
+implementation of it there is. SMB goes through each OS's own layer: UNC paths
+on Windows, NetFS mounts on macOS, which means the Keychain answers for servers
+you've already connected to in Finder.
+
+Browsing a server lists its shares without mounting anything; mounting happens
+when you enter one, and nothing is ever unmounted behind your back. Remote
+listings are read-only in this version: you can browse, preview and copy *out*,
+but not write back. A server that wants credentials asks once, in Delight's own
+dialog, and an inline password is used and forgotten rather than stored.
+
 ### Getting around
 
 Each pane has a Favorites menu (⌘1 for the left pane, ⌘2 for the right) —
@@ -204,8 +226,11 @@ the code but not yet built or supported.
 
 ## What Delight is not
 
-- **Not a network client.** SMB, FTP, SFTP and S3 have been considered and may
-  come later; today Delight browses what the OS has mounted.
+- **Not a general network client.** SMB and SFTP are in (see "Network
+  locations" above) because they're how people reach their own NAS and their own
+  servers. FTP, WebDAV and S3 are not, and cloud-storage APIs — Drive, Dropbox's
+  own protocol, iCloud — are firmly out: those are sync products with their own
+  clients, and half-implementing one is worse than not having it.
 - **Not an archiver.** Archives open read-only; packing is zip-only, no
   encryption, no editing an archive in place.
 - **Not a search engine.** ⌘F finds within the current listing. Indexing or

@@ -4,142 +4,153 @@ A Total Commander–style **dual-pane file manager** that tries to live up to it
 name: fast, keyboard-first, no jank, with its own clean design (not a native
 look-alike).
 
-> **v0.1 — macOS & Windows.** File operations (copy / move / rename / new folder /
-> move-to-Trash) are guarded and confirmed by default; everything else is
-> read-only. The only thing it writes unprompted is its own settings.
->
-> On **Windows** every **⌘** shortcut below is **Ctrl** (⌘T → Ctrl+T, etc.).
+![Delight Commander](docs/screenshot.png)
 
 ## Download
 
-[**⬇ macOS (Apple silicon)**](https://github.com/mtrencseni/delight/releases/latest/download/Delight-macos_arm64.dmg)
-— a `.dmg` disk image; drag the app to Applications. The link always points at
-the newest release.
-([checksum](https://github.com/mtrencseni/delight/releases/latest/download/Delight-macos_arm64.dmg.sha256)
-· [all releases](https://github.com/mtrencseni/delight/releases))
-
-[**⬇ Windows (x64)**](https://github.com/mtrencseni/delight/releases/latest/download/Delight-win_x64-portable.exe)
-— no installer, just a single `.exe`. The link always points at the newest
-release.
-([checksum](https://github.com/mtrencseni/delight/releases/latest/download/Delight-win_x64-portable.exe.sha256)
-· [all releases](https://github.com/mtrencseni/delight/releases))
-
-> The macOS build is signed with a *self-signed* certificate, so Gatekeeper will
-> refuse it on any machine other than the one that built it — it isn't ready for
-> general installation yet. The Windows `.exe` is unsigned, so SmartScreen warns.
-
-![Delight Commander](docs/screenshot.png)
+- [**macOS** (Apple silicon)](https://github.com/mtrencseni/delight/releases/latest/download/Delight-macos_arm64.dmg)
+- [**Windows** (x64)](https://github.com/mtrencseni/delight/releases/latest/download/Delight-win_x64-portable.exe)
 
 ## Features
 
 **Browsing**
-- Two independent panes with tabs (Chrome-style: drag to reorder, middle-click to close).
-- Three views per pane, switchable with **⌘L / ⌘C / ⌘I**:
-  - **List** — sortable, resizable, reorderable columns.
-  - **Chips** — the selected item expands into a rich detail card; **Bigger chips**
-    (the default) gives it a large content preview with the details beside it. The
-    compact rows share the list's exact columns, so switching list↔chips doesn't shift anything.
-  - **Icons** — a grid with Finder-style selection and **rubber-band (marquee)
-    selection**: drag across empty space to select, auto-scrolling at the edges.
-- Finder-style disclosure triangles: expand a folder inline as a tree without leaving the pane.
-- Editable path bar — type a path and press Enter. Open folders **auto-refresh** when their contents change on disk.
+- Two independent panes with tabs (drag to reorder, middle-click to close), or a
+  single wide pane with **⌘P**.
+- Three views per pane — **List** (sortable, resizable, reorderable columns),
+  **Chips** (the cursor item expands into a detail card), **Icons** (a grid with
+  marquee selection) — on **⌘⇧L / ⌘C / ⌘I**.
+- Folders expand in place with a disclosure triangle, so you can inspect a
+  subtree without leaving the pane.
+- Editable path bar with recent-path autocomplete (**⌘L**). Open folders
+  auto-refresh when they change on disk.
+- Column order and widths are **one global spec** — reorder or resize anywhere
+  and every pane and tab follows.
 
-**Selecting & sorting**
-- Multi-select: click, **Shift-click** for a range, **⌘/⌃-click** to toggle, **Shift+↑/↓** to extend, **⌘A** to select all.
-- Sort by clicking a header or with **⌘N / ⌘E / ⌘S / ⌘⇧C / ⌘M** (name / ext / size / created / modified). Optionally keep both panes in sync.
-- Optional **Created** and **Permissions** columns. Column order and widths are **one
-  global spec** — reorder or resize in any pane and every pane and tab follows.
+**Finding & selecting**
+- **⌘F** jumps to the first matching name and cycles through matches, without
+  filtering the listing — you keep the context around the file.
+- **Shift-click** for a range, **⌘-click** to toggle, **⇧↑/↓** to extend,
+  **⌘A** to select all (or deselect, if something is selected).
+- **+** / **−** select or deselect by wildcard mask (`*.png`).
 
-**Working with files**
-- **Double-click / Enter** a file → opens in the default app. **Space** → a live preview in the opposite pane (or a Finder Quick Look window — your choice); the preview pane **stays open across folder changes**, tracking the cursor like Finder.
-- **Preview icons** (optional, Finder-style): show real content thumbnails in list & icon views, at your chosen resolution — shared with the Space preview so they load once.
-- **Drag files out** of Delight into Finder, Mail, or any app (a copy — never a move).
-- **Favorites** dropdown per pane (**⌘1** / **⌘2**), keyboard-navigable and drag-reorderable. Your Dropbox folder is added automatically if you have one.
+**Looking at files**
+- **Space** previews in the opposite pane: images as thumbnails, text and code
+  in a real read-only editor with syntax highlighting, line numbers, a minimap
+  and find — the same editor its sibling app
+  [Buffers](https://github.com/mtrencseni/buffers) uses. PDFs render as real
+  documents. The preview follows the cursor and survives folder changes.
+- Optional **preview icons**: real content thumbnails in list and icon views.
+- On macOS, the system Quick Look panel instead, if you prefer it.
 
-**Polish**
-- Light / dark / system themes, browser-style zoom, show/hide dotfiles.
-- Size bars behind file sizes (linear or logarithmic), recency tint (**Now / today / yesterday**), optional real macOS file icons.
-- Keyboard navigation suppresses the mouse-hover highlight, so only the cursor row reads as active.
-- Display all names in original / lowercase / UPPERCASE.
-- **Fully configurable keyboard shortcuts** in a dedicated Shortcuts tab.
-- Remembers window size and position; opens at 80% of the screen the first time.
+**Acting on files**
+- Copy, move, rename, new folder, and delete on the Commander keys — **F5 / F6 /
+  ⇧F6 / F7 / F8** (macOS: **5 / 6 / ⇧6 / 7 / 8**). Destructive actions are
+  confirmed by default, long ones show cancelable progress, and **delete means
+  Trash** — there is no hard-delete path.
+- **Drag files out** into Finder, Explorer, Mail or any app — always a copy,
+  never a move.
 
-## Install & run
+**Archives**
+- Browse **zip** (and jar/apk/docx…), **7z**, **tar** and its compressed forms
+  (gz, bz2, xz, zst) as if they were folders; **F5** copies files back out.
+  Encrypted zips prompt for a password, and a wrong one is never cached.
+- **Alt+F5** packs the selection into a zip, **Alt+F9** unpacks an archive.
 
+**Network locations**
+- **SFTP** — `sftp://user@host/path`, spoken over your system `ssh`, so
+  `~/.ssh/config`, agent keys, `known_hosts` and ProxyJump all work as they
+  already do in your terminal.
+- **SMB** — `smb://server/share`, over UNC on Windows and mounted through NetFS
+  on macOS. One portable address form means a favorite saved on one platform
+  works on the other.
+- The globe button in the path bar builds either address for you, with a live
+  preview and your recent servers.
+
+**Making it yours**
+- **Every** shortcut is rebindable in a Shortcuts tab; **⌘K** draws a keyboard
+  of the current bindings, and holding a modifier switches layers.
+- **⌥S** — the newest file on the Desktop: jumps there, sorts newest first,
+  selects it and previews it. Made for take-a-screenshot-then-drag-it-somewhere.
+- Favorites per pane (**⌘1** / **⌘2**), keyboard-navigable and drag-reorderable.
+- Light / dark / system themes, browser-style zoom, show/hide hidden files, size
+  bars, recency tint, and name casing.
+
+## Keyboard shortcuts
+
+All shortcuts are rebindable in **Settings → Keyboard → Configure shortcuts**,
+and **⌘K** shows them on a drawn keyboard. Defaults (on Windows, read every
+**⌘** as **Ctrl**):
+
+| Keys | Action |
+| --- | --- |
+| ⌘T / ⌘W | New / close tab _(Windows also Ctrl+F4)_ |
+| ⌘⇧[ · ⌘⇧] · ⌃⇥ · ⌘` | Switch / cycle tabs |
+| ⌘⇧L / ⌘C / ⌘I | List / Chips / Icons view |
+| ⌘P | Single-pane ↔ dual-pane |
+| ⌘L | Focus the path bar |
+| ⌘, | Settings |
+| Tab | Switch active pane |
+| ↑ ↓ · PgUp PgDn · Home End · ⌘↑ ⌘↓ | Move cursor / jump to top / bottom |
+| ⌘→ / ⌘← | Expand / collapse folder |
+| → / ← | Next / previous recent folder |
+| Enter · double-click | Open (folder or default app) |
+| Backspace | Go up a folder |
+| ⌘F | Find in pane |
+| ⇧→ / ⇧← · ⇧↑ / ⇧↓ · ⌘A | Select / deselect · extend · select all |
+| + / − | Select / deselect by mask |
+| **F5 / F6 / ⇧F6 / F7 / F8** | Copy / Move / Rename / New folder / Delete _(macOS: 5 / 6 / ⇧6 / 7 / 8)_ |
+| Alt+F5 / Alt+F9 | Pack to zip / unpack _(macOS: ⌥5 / ⌥9)_ |
+| ⌘⏎ | Open archive as a folder |
+| Space · F3 | Preview _(macOS: Space · 3)_ |
+| ⌥S | Newest file on the Desktop |
+| ⌘1 / ⌘2 | Favorites — left / right pane |
+| **Alt+F1 / Alt+F2** | Drive picker for the left / right pane _(Windows)_ |
+| ⌘N ⌘E ⌘S ⌘⇧C ⌘M | Sort by name / ext / size / created / modified |
+| ⌘+ ⌘− ⌘0 | Zoom in / out / reset |
+| ⌘⇧. | Show / hide hidden files |
+| ⌘K | Keyboard map |
+| ⌥⌘I | Developer tools (when enabled) |
+
+## Platform support
+
+**macOS and Windows** both build and run. Previews and thumbnails work on both
+(Windows via the Shell's image factory), drives are reachable with the Alt+F1/F2
+picker, and ⌘ shortcuts map to Ctrl. The few macOS-only niceties — the
+standalone Quick Look panel, system file icons in list and grid, the global menu
+bar — degrade gracefully to the vector icons and the in-pane preview; the app
+looks and behaves the same otherwise. Linux is not yet built, but the code is
+fenced for it.
+
+## Development
+
+The downloads above are the built app; this section is for working on it.
 Requires [Node](https://nodejs.org) + [pnpm](https://pnpm.io) and the
 [Rust toolchain](https://www.rust-lang.org/tools/install).
 
 ```sh
 pnpm install
-pnpm tauri dev      # run the native app with hot-reload
+pnpm tauri dev      # the native app, with hot-reload
 pnpm dev            # browser-only UI against a mock filesystem (no native shell)
+pnpm tauri build    # a distributable app bundle
+./node_modules/.bin/tsc            # typecheck
+cd src-tauri && cargo check && cargo test
 ```
 
-Build a distributable app:
+The code preview reuses [Buffers](https://github.com/mtrencseni/buffers)' editor
+verbatim, so **both repos must be checked out side by side** — `src/langs.ts` and
+`src/editor-core.ts` re-export from `../../Buffers/src/`.
 
-```sh
-pnpm tauri build
-# macOS   → src-tauri/target/release/bundle/macos/Delight.app
-# Windows → src-tauri/target/release/delight.exe (standalone)
-#           src-tauri/target/release/bundle/nsis/Delight_0.1.0_x64-setup.exe (installer)
-```
-
-The Windows installer is unsigned, so SmartScreen shows a "More info → Run
-anyway" prompt the first time; it bootstraps the WebView2 runtime on older
-Windows 10 if it's missing.
-
-## Keyboard shortcuts
-
-All shortcuts are rebindable in **Settings → Keyboard → Configure shortcuts**.
-Defaults (on Windows, read every **⌘** as **Ctrl**):
-
-| Keys | Action |
-| --- | --- |
-| ⌘T / ⌘W | New / close tab |
-| ⌘⇧[ · ⌘⇧] · ⌃⇥ · ⌘` | Switch / cycle tabs (skips Settings) |
-| ⌘L / ⌘C / ⌘I | List / Chips / Icons view |
-| ⌘, | Settings |
-| Tab | Switch active pane |
-| ↑ ↓ · PgUp PgDn · Home End · ⌘↑ ⌘↓ | Move cursor / jump to top / bottom |
-| → ← | Expand / collapse folder (list view) |
-| ⇧↑ / ⇧↓ · ⌘A | Extend selection / select all |
-| Enter · double-click | Open (folder or default app) |
-| Backspace | Go up a folder |
-| **F5 / F6 / ⇧F6 / F7 / F8** | Copy / Move / Rename / New folder / Delete — the Norton Commander keys _(macOS: 5 / 6 / ⇧6 / 7 / 8)_ |
-| Space · F3 | Preview _(F3 = "view"; macOS: Space · 3)_ |
-| **Alt+F1 / Alt+F2** | Drive picker for the left / right pane _(Windows)_ |
-| ⌘1 / ⌘2 | Favorites — left / right pane |
-| ⌘N ⌘E ⌘S ⌘⇧C ⌘M | Sort by name / ext / size / created / modified |
-| ⌘+ ⌘− ⌘0 | Zoom in / out / reset |
-| ⌘⇧. | Show / hide hidden files |
-| ⌥⌘I | Developer tools (when enabled) |
-
-## Privacy & data
-
-- **Read-only.** Delight never modifies your files.
-- Its own settings (open tabs, favorites, shortcuts, window size, …) live in a
-  single JSON file — macOS:
-  `~/Library/Application Support/com.trencseni.delight/settings.json`, Windows:
-  `%APPDATA%\com.trencseni.delight\settings.json` (plus `.window-state.json`). It
-  writes nowhere else.
-- On macOS, the first time you browse into a protected folder (Downloads,
-  Documents, …), the OS asks for permission once, as it does for any app.
-
-## Platform support
-
-**macOS and Windows** both build and run. File previews/thumbnails work on both
-(Windows uses the Shell's image factory), drives are reachable with the Alt+F1/F2
-picker, and ⌘ shortcuts map to Ctrl (file ops use the Norton F-keys). The few
-macOS-only niceties (the standalone Quick Look panel, list/grid system file
-icons, the global menu bar) degrade gracefully on Windows to the vector icons and
-the in-pane preview — the app looks and behaves the same otherwise. Linux is not
-yet built but the code is fenced for it. See [CLAUDE.md](CLAUDE.md) for the
-per-platform status and where each OS difference lives.
+Releases are cut by pushing a `v*` tag: CI builds and publishes the Windows
+binary, and the macOS build is attached from a Mac. See [CLAUDE.md](CLAUDE.md).
 
 ## Tech
 
 Tauri 2 (Rust backend + WKWebView on macOS / WebView2 on Windows) with a vanilla
-TypeScript / Vite frontend.
-All filesystem access goes through Rust commands — the webview never touches the
-disk. See [CLAUDE.md](CLAUDE.md) for architecture and [SPEC.md](SPEC.md) for the
-original v0.1 spec.
+TypeScript / Vite frontend. All filesystem access goes through Rust commands —
+the webview never touches the disk.
+
+- [PRODUCT.md](PRODUCT.md) — what the product is, who it's for, and what it
+  deliberately isn't.
+- [ARCHITECTURE.md](ARCHITECTURE.md) — how it's put together and why.
+- [CLAUDE.md](CLAUDE.md) — working notes: per-platform status, where each OS
+  difference lives, and the release checklist.

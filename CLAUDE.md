@@ -32,11 +32,58 @@ root `rem` so zoom Just Works. If a feature can't feel good, cut it.
 pnpm install
 pnpm tauri dev            # native app + HMR
 pnpm dev                  # browser-only against src/mock.ts (no native shell)
-pnpm tauri build          # macOS → …/bundle/macos/Delight.app
-                          # Windows → …/release/delight.exe + …/bundle/nsis/Delight_0.1.0_x64-setup.exe
+pnpm tauri build          # macOS → …/bundle/macos/Delight.app + …/bundle/dmg/*.dmg
+                          # Windows → …/release/delight.exe (releases ship this, --no-bundle)
 ./node_modules/.bin/tsc   # typecheck (also: pnpm build runs prebuild + tsc + vite build)
 cd src-tauri && cargo check
 ```
+
+## Cutting a release
+
+Pushing a `v*` tag is the whole trigger: `.github/workflows/release.yml` builds
+the Windows x64 portable exe on a runner and opens a **draft** release. macOS is
+not built in CI — attach it from a Mac. Do these in order:
+
+1. **Update the docs to match what shipped.** Every release, before tagging:
+   - `README.md` — the Features section and the shortcut table. This is the file
+     that goes stale fastest, because features land without anyone re-reading
+     it. Check the shortcut table against `COMMANDS` in `src/commands.ts`
+     rather than trusting it: extract the defaults with
+     `grep -oE '\{ id: "[a-zA-Z]+".*defaults: \[[^]]*\]' src/commands.ts`.
+     Never name a version number in the README — it dates the file, and the
+     download links already point at "latest".
+   - `PRODUCT.md` — especially "What Delight is not", which is where a shipped
+     feature contradicts an old promise (v0.2's SMB/SFTP did exactly that).
+   - `ARCHITECTURE.md` — new subsystems and their seams.
+   - This file — the cross-platform status table.
+2. **Bump the version in all four places**, or the workflow fails the build:
+   `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and
+   `Cargo.lock` (a `cargo check` refreshes it). The tag must match
+   `tauri.conf.json` exactly — three-part semver, `v0.2.0` not `v0.2`.
+3. `git tag -a vX.Y.Z && git push origin vX.Y.Z`, then watch
+   `gh run list --repo mtrencseni/delight`.
+4. **Build and attach macOS** once CI is green:
+   ```sh
+   pnpm tauri build
+   # upload the .dmg TWICE — versioned for the archive, unversioned because
+   # /releases/latest/download/<file> only resolves if the name is identical in
+   # every release, which is what the README links depend on.
+   cp …/Delight_X.Y.Z_aarch64.dmg Delight-X.Y.Z-macos_arm64.dmg
+   cp …/Delight_X.Y.Z_aarch64.dmg Delight-macos_arm64.dmg
+   shasum -a 256 <each> > <each>.sha256
+   gh release upload vX.Y.Z *.dmg *.sha256 --repo mtrencseni/delight --clobber
+   ```
+   Then re-download and verify every checksum before publishing.
+5. **Write the notes and publish.** `generate_release_notes` produces only a
+   changelog link (everything lands straight on `main`, so there are no PR
+   titles to harvest) — replace it from `git log vPREV..vNEW`. Keep the
+   unsigned-build caveat: the macOS app is self-signed, so Gatekeeper blocks it
+   elsewhere, and the Windows exe trips SmartScreen.
+   `gh release edit vX.Y.Z --notes-file … --draft=false --latest`
+
+Note: both repos are **private**, so `/releases/latest/download/…` 404s for
+anyone not signed in with access. The README links only work for collaborators
+until the repos go public.
 
 ## Platform partitioning — the rule
 
