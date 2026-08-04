@@ -13,6 +13,7 @@ import { confirmDialog, promptDialog } from "./dialog";
 import { toggleKeyboardMap } from "./keyboardmap";
 import { ProgressHandle, type OpProgress } from "./progress";
 import { archiveFileFor, askArchivePassword, inArchive, isArchiveName, MARK, needsPassword, setArchiveFormats } from "./archive";
+import { isRemotePath } from "./sftp";
 import { icons } from "./icons";
 import { buildSettingsPage, type SettingsPage } from "./settingsPage";
 import { buildKeybindingsPage, type KeybindingsPage } from "./keybindingsPage";
@@ -233,6 +234,7 @@ class App {
       keyboardMap: () => toggleKeyboardMap(),
       preview: () => this.doPreview(),
       desktopNewest: () => void this.showNewestOnDesktop(),
+      showInfo: () => void this.showItemInfo(),
       closePreview: () => this.closePanePreview(),
       devtools: () => {
         if (state.settings.devTools) void invoke("toggle_devtools").catch(() => {});
@@ -1505,6 +1507,28 @@ class App {
     if (this.previewSource && this.previewSource !== p) this.closePanePreview();
     if (this.previewTarget) this.refreshPanePreview();
     else this.togglePanePreview(p);
+  }
+
+  /** ⌘I: Finder's Get Info window for the cursor item. Only reachable for
+      things that have a real path on this machine — an entry inside an archive
+      or on an SFTP host has none, and Finder would just be told to inspect a
+      file that doesn't exist. */
+  private async showItemInfo(): Promise<void> {
+    const cur = this.activePane()?.currentEntry();
+    if (!cur) return;
+    if (inArchive(cur.dirPath)) {
+      toast("Get Info isn't available inside an archive");
+      return;
+    }
+    if (isRemotePath(cur.dirPath)) {
+      toast("Get Info isn't available for remote files");
+      return;
+    }
+    try {
+      await invoke("show_info", { dir: cur.dirPath, name: cur.entry.name });
+    } catch (e) {
+      toast(String(e));
+    }
   }
 
   /** ⌥S: the Desktop, newest file first, cursor on it, preview open.

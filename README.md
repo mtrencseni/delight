@@ -18,7 +18,7 @@ look-alike).
   single wide pane with **⌘P**.
 - Three views per pane — **List** (sortable, resizable, reorderable columns),
   **Chips** (the cursor item expands into a detail card), **Icons** (a grid with
-  marquee selection) — on **⌘⇧L / ⌘C / ⌘I**.
+  marquee selection) — on **⌘⇧L / ⌘⇧C / ⌘⇧I**.
 - Folders expand in place with a disclosure triangle, so you can inspect a
   subtree without leaving the pane.
 - Editable path bar with recent-path autocomplete (**⌘L**). Open folders
@@ -49,6 +49,7 @@ look-alike).
   Trash** — there is no hard-delete path.
 - **Drag files out** into Finder, Explorer, Mail or any app — always a copy,
   never a move.
+- **⌘I** opens Finder's Get Info window for the cursor item (macOS).
 
 **Archives**
 - Browse **zip** (and jar/apk/docx…), **7z**, **tar** and its compressed forms
@@ -85,7 +86,7 @@ and **⌘K** shows them on a drawn keyboard. Defaults (on Windows, read every
 | --- | --- |
 | ⌘T / ⌘W | New / close tab _(Windows also Ctrl+F4)_ |
 | ⌘⇧[ · ⌘⇧] · ⌃⇥ · ⌘` | Switch / cycle tabs |
-| ⌘⇧L / ⌘C / ⌘I | List / Chips / Icons view |
+| ⌘⇧L / ⌘⇧C / ⌘⇧I | List / Chips / Icons view |
 | ⌘P | Single-pane ↔ dual-pane |
 | ⌘L | Focus the path bar |
 | ⌘, | Settings |
@@ -103,9 +104,10 @@ and **⌘K** shows them on a drawn keyboard. Defaults (on Windows, read every
 | ⌘⏎ | Open archive as a folder |
 | Space · F3 | Preview _(macOS: Space · 3)_ |
 | ⌥S | Newest file on the Desktop |
+| ⌘I | Get Info in Finder _(macOS)_ |
 | ⌘1 / ⌘2 | Favorites — left / right pane |
 | **Alt+F1 / Alt+F2** | Drive picker for the left / right pane _(Windows)_ |
-| ⌘N ⌘E ⌘S ⌘⇧C ⌘M | Sort by name / ext / size / created / modified |
+| ⌘N ⌘E ⌘S ⌘C ⌘M | Sort by name / ext / size / created / modified |
 | ⌘+ ⌘− ⌘0 | Zoom in / out / reset |
 | ⌘⇧. | Show / hide hidden files |
 | ⌘K | Keyboard map |

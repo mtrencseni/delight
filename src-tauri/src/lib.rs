@@ -61,6 +61,7 @@ pub fn run() {
             details::file_thumbnail,
             actions::open_path,
             actions::open_in_editor,
+            actions::show_info,
             actions::quicklook,
             actions::quicklook_close,
             actions::toggle_devtools,

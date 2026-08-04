@@ -24,6 +24,7 @@ export type CommandId =
   | "cursorHome"
   | "cursorEnd"
   | "desktopNewest"
+  | "showInfo"
   | "open"
   | "up"
   | "find"
@@ -111,6 +112,8 @@ export const COMMANDS: Command[] = [
   // out of the pane. Goes to the Desktop, newest first, cursor on the newest
   // file, preview open — see main.ts showNewestOnDesktop.
   { id: "desktopNewest", label: "Newest file on the Desktop", short: "Desktop", group: "Panes & navigation", defaults: ["Alt+KeyS"] },
+  // ⌘I is the Finder gesture for this, which is the whole point of matching it.
+  { id: "showInfo", label: "Get Info in Finder", short: "Get Info", group: "Panes & navigation", defaults: [`${MOD}+KeyI`] },
   { id: "open", label: "Open", group: "Panes & navigation", defaults: ["Enter"] },
   { id: "up", label: "Go up a folder", short: "Up a folder", group: "Panes & navigation", defaults: ["Backspace"] },
   // Quick-search inside the active pane. Binding it here is also what stops the
@@ -164,7 +167,9 @@ export const COMMANDS: Command[] = [
   { id: "sortExt", label: "Sort by extension", short: "Sort ext", group: "Sorting", defaults: [`${MOD}+KeyE`] },
   { id: "sortSize", label: "Sort by size", short: "Sort size", group: "Sorting", defaults: [`${MOD}+KeyS`] },
   // ⌘C is the Chips-view shortcut; sort-by-created moved to ⌘⇧C.
-  { id: "sortCreated", label: "Sort by created", short: "Sort created", group: "Sorting", defaults: [`${MOD}+Shift+KeyC`] },
+  // Created returns to ⌘C, where it started: with the views on ⌘⇧, every sort
+  // key is now the unshifted initial of what it sorts by (N/E/S/C/M).
+  { id: "sortCreated", label: "Sort by created", short: "Sort created", group: "Sorting", defaults: [`${MOD}+KeyC`] },
   { id: "sortModified", label: "Sort by modified", short: "Sort modified", group: "Sorting", defaults: [`${MOD}+KeyM`] },
 
   // View
@@ -175,9 +180,12 @@ export const COMMANDS: Command[] = [
   // No default: every obvious combo is taken, and the path bar's globe button
   // is the discoverable route. Bindable in the Shortcuts tab like anything else.
   { id: "connectNetwork", label: "Connect to a server", short: "Connect", group: "Panes & navigation", defaults: [] },
+  // All three views share one shape — ⌘⇧ + a letter — so the set is learned as
+  // a group rather than three unrelated keys. That frees the unshifted ⌘C and
+  // ⌘I, which go back to sorting by created and to Get Info.
   { id: "viewList", label: "List view", group: "View", defaults: [`${MOD}+Shift+KeyL`] },
-  { id: "viewChips", label: "Chips view", group: "View", defaults: [`${MOD}+KeyC`] },
-  { id: "viewGrid", label: "Icon view", group: "View", defaults: [`${MOD}+KeyI`] },
+  { id: "viewChips", label: "Chips view", group: "View", defaults: [`${MOD}+Shift+KeyC`] },
+  { id: "viewGrid", label: "Icon view", group: "View", defaults: [`${MOD}+Shift+KeyI`] },
   { id: "toggleSingle", label: "Single-pane view", short: "Single pane", group: "View", defaults: [`${MOD}+KeyP`] },
   { id: "zoomIn", label: "Zoom in", group: "View", defaults: [`${MOD}+Equal`, `${MOD}+NumpadAdd`] },
   { id: "zoomOut", label: "Zoom out", group: "View", defaults: [`${MOD}+Minus`, `${MOD}+NumpadSubtract`] },
@@ -326,11 +334,26 @@ export function mergeKeybindings(saved: unknown): Record<CommandId, string[]> {
       );
       if (!usedElsewhere && !base[id].includes(combo)) base[id].push(combo);
     }
-    // ⌘C used to be "sort by created" but is now the Chips-view shortcut. If a
-    // saved config still holds the old ⌘C-only binding, move sort-created to ⌘⇧C
-    // so ⌘C is free for viewChips (whose default we then leave intact).
-    if (base.sortCreated.length === 1 && base.sortCreated[0] === `${MOD}+KeyC`) {
-      base.sortCreated = [`${MOD}+Shift+KeyC`];
+    // The three views moved onto one ⌘⇧ shape (⌘⇧L / ⌘⇧C / ⌘⇧I), which hands
+    // the unshifted ⌘C back to sort-by-created and frees ⌘I for Get Info.
+    // Saved configs store the FULL binding set, so without this rotation an
+    // existing config keeps Chips on ⌘C and Icons on ⌘I — and the new Get Info
+    // command would answer a combo already spoken for. Each move is guarded on
+    // the binding still being the untouched old default, and every guard reads
+    // the OLD value, so the three are independent of each other's order.
+    if (base.viewChips.length === 1 && base.viewChips[0] === `${MOD}+KeyC`) {
+      base.viewChips = [`${MOD}+Shift+KeyC`];
+    }
+    if (base.viewGrid.length === 1 && base.viewGrid[0] === `${MOD}+KeyI`) {
+      base.viewGrid = [`${MOD}+Shift+KeyI`];
+    }
+    // Created has now been on both spellings — ⌘C originally, ⌘⇧C for as long
+    // as Chips held ⌘C, and ⌘C again now — so accept either and land on ⌘C.
+    if (
+      base.sortCreated.length === 1 &&
+      (base.sortCreated[0] === `${MOD}+Shift+KeyC` || base.sortCreated[0] === `${MOD}+KeyC`)
+    ) {
+      base.sortCreated = [`${MOD}+KeyC`];
     }
     // ⌘L used to be List view and is now "focus the path bar" (the browser
     // convention). A saved config still holds the old ⌘L, which would leave two

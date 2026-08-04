@@ -63,6 +63,77 @@ fn open_native(p: &PathBuf) -> Result<(), String> {
     Command::new("xdg-open").arg(p).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// Open Finder's Get Info window for one item (⌘I, the same gesture Finder
+/// uses). There is no public Cocoa call for this — Get Info is Finder's own
+/// window — so it goes through Finder's scripting interface.
+///
+/// The path is passed as an ARGUMENT to the script rather than interpolated
+/// into it: a file name containing a quote or a backslash would otherwise end
+/// up as AppleScript source, which is both a broken command and an injection.
+/// `on run argv` is what makes that possible.
+///
+/// Sending Apple Events needs the user's permission the first time (macOS shows
+/// "Delight wants to control Finder"); the reason string for that prompt is
+/// NSAppleEventsUsageDescription in Info.plist. If they decline, osascript
+/// fails and its message is what the caller shows.
+#[tauri::command]
+pub fn show_info(dir: String, name: Option<String>) -> Result<(), String> {
+    let p = join(crate::smb::localize(&dir), name);
+    show_info_native(&p)
+}
+
+#[cfg(target_os = "macos")]
+fn show_info_native(p: &PathBuf) -> Result<(), String> {
+    // Not spawn(): the failure that matters (permission refused) is reported by
+    // osascript on stderr as it exits, and a detached child would swallow it.
+    let out = Command::new("osascript")
+        .args([
+            "-e",
+            "on run argv",
+            "-e",
+            "tell application \"Finder\"",
+            "-e",
+            "activate",
+            "-e",
+            "open information window of (POSIX file (item 1 of argv) as alias)",
+            "-e",
+            "end tell",
+            "-e",
+            "end run",
+            "--",
+        ])
+        .arg(p)
+        .output()
+        .map_err(|e| format!("Couldn't run osascript: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let err = String::from_utf8_lossy(&out.stderr);
+    let err = err.trim();
+    // -1743 is "not authorized to send Apple events", i.e. the Automation
+    // permission was declined; it's the one failure with a real remedy.
+    if err.contains("-1743") {
+        return Err(
+            "Delight isn't allowed to control Finder — enable it in System Settings → \
+             Privacy & Security → Automation."
+                .into(),
+        );
+    }
+    Err(if err.is_empty() {
+        "Finder wouldn't open the info window".into()
+    } else {
+        err.to_string()
+    })
+}
+
+/// Windows has a Properties dialog (ShellExecuteEx with the "properties" verb)
+/// and Linux desktops have their own; neither is wired up yet, so say so rather
+/// than failing silently.
+#[cfg(not(target_os = "macos"))]
+fn show_info_native(_p: &PathBuf) -> Result<(), String> {
+    Err("Get Info is only available on macOS".into())
+}
+
 #[derive(serde::Deserialize)]
 pub struct QlItem {
     dir: String,

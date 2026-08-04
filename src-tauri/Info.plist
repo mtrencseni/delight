@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged into the generated Info.plist by tauri-bundler on macOS.
+
+  NSAppleEventsUsageDescription is the sentence macOS shows in the "Delight
+  wants to control Finder" prompt, which is triggered the first time Get Info
+  (⌘I) asks Finder to open an info window. Without this key the prompt has no
+  reason to show the user, and macOS may refuse the event outright.
+-->
+<plist version="1.0">
+<dict>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Delight asks Finder to open the Get Info window for the selected file.</string>
+</dict>
+</plist>

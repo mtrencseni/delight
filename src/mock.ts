@@ -431,6 +431,9 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
     case "open_path":
       console.log("[mock] open_path", args?.dir, args?.name);
       return undefined as T;
+    case "show_info":
+      console.log("[mock] show_info", args?.dir, args?.name);
+      return undefined as T;
     case "quicklook":
       console.log("[mock] quicklook idx", args?.index, (args?.items as any[])?.map((i) => i.name));
       return undefined as T;
