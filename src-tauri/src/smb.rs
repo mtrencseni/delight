@@ -1252,7 +1252,8 @@ mod tests {
     #[test]
     #[ignore]
     fn enumerates_localhost_shares() {
-        let shares = list_shares("localhost").expect("NetShareEnum against localhost");
+        let url = SmbUrl::parse("smb://localhost").expect("a bare authority parses");
+        let shares = list_shares(&url).expect("NetShareEnum against localhost");
         // Typically ADMIN$/C$ etc — all hidden — but any Ok result proves the call.
         for s in &shares {
             assert!(s.is_dir);
