@@ -173,6 +173,7 @@ export function persist(): void {
             viewMode: p.viewMode,
             gridSize: p.gridSize,
             colOrder: p.colOrder,
+            driveDirs: p.driveDirs,
           })) ?? null,
       })),
     };

@@ -72,6 +72,12 @@ export interface PaneState {
   gridSize: number;
   /** Per-pane column order (used only when column order is not linked). */
   colOrder?: ColKey[];
+  /** Where this pane last was on each drive, keyed by upper-case letter
+      ("C" → "C:\\abc"). Switching drives returns you there instead of dumping
+      you at the root. Per pane and per tab, so the two sides keep their own
+      places. Windows-only in practice — a path with no drive letter never
+      lands here. */
+  driveDirs?: Record<string, string>;
 }
 
 /** A saved location shown in the pane's locations dropdown (global list). */

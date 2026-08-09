@@ -959,6 +959,7 @@ export class PaneView {
       this.st.path = l.path;
       this.st.listing = l;
       this.st.cursor = 0;
+      this.rememberDrivePath(l.path); // so switching drives comes back here
       recordVisit(l.path); // remember this folder for the "recent folders" highlight
       this.expandState.clear(); // disclosure state belongs to the old root
       this.pathInput.value = this.displayedPath(l.path);
@@ -2907,6 +2908,27 @@ export class PaneView {
       .catch(() => {});
   }
 
+  /** Note this pane's position on the drive it's on, so a later switch back to
+      that drive can return here. Only real drive-letter paths qualify: an
+      archive's inner path, smb:// and sftp:// have no drive to key on. */
+  private rememberDrivePath(path: string): void {
+    if (inArchive(path)) return;
+    const letter = driveLetter(path);
+    if (!letter) return;
+    (this.st.driveDirs ??= {})[letter] = path;
+  }
+
+  /** Go to a drive, resuming where this pane last was on it. Falls back to the
+      root when there's no memory, or when the remembered folder has since been
+      renamed, deleted or unplugged — so a stale entry can never strand you. */
+  private async goToDrive(d: { name: string; path: string }): Promise<void> {
+    const letter = this.driveKeyOf(d);
+    const remembered = letter ? this.st.driveDirs?.[letter] : undefined;
+    if (remembered && remembered !== d.path && (await this.navigate(remembered))) return;
+    if (remembered) delete this.st.driveDirs?.[letter!]; // it's gone; stop trying
+    await this.navigate(d.path);
+  }
+
   private closeDrives(): void {
     this.drivePop?.remove();
     this.drivePop = null;
@@ -2936,7 +2958,7 @@ export class PaneView {
       item.append(ic, label);
       item.addEventListener("click", () => {
         this.closeDrives();
-        void this.navigate(d.path);
+        void this.goToDrive(d);
       });
       list.append(item);
     });
@@ -2985,7 +3007,7 @@ export class PaneView {
       const d = this.driveList.find((x) => this.driveKeyOf(x) === want);
       if (d) {
         this.closeDrives();
-        void this.navigate(d.path);
+        void this.goToDrive(d);
       }
       return;
     }
@@ -3015,7 +3037,7 @@ export class PaneView {
         e.stopPropagation();
         const d = this.driveList[this.driveActive];
         this.closeDrives();
-        if (d) void this.navigate(d.path);
+        if (d) void this.goToDrive(d);
         break;
       }
       case "Escape":

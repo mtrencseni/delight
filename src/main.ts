@@ -472,6 +472,13 @@ class App {
           : "chips",
       gridSize: clamp(num(r?.gridSize, GRID_DEFAULT), GRID_MIN, GRID_MAX),
       colOrder: Array.isArray(r?.colOrder) ? normalizeColumnOrder(r.colOrder) : undefined,
+      // Per-drive positions: keep only string→string pairs, so a hand-edited or
+      // older settings.json can't put junk where a path is expected.
+      driveDirs: Object.fromEntries(
+        Object.entries((r?.driveDirs ?? {}) as Record<string, unknown>).filter(
+          ([k, v]) => typeof v === "string" && /^[A-Za-z0-9]$/.test(k)
+        )
+      ) as Record<string, string>,
     });
     const tab: Tab = {
       id: newTabId(),
