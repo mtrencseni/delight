@@ -17,7 +17,7 @@ fn join(dir: String, name: Option<String>) -> PathBuf {
 /// application" dialog when no default is registered.
 #[tauri::command]
 pub fn open_path(dir: String, name: Option<String>) -> Result<(), String> {
-    let p = join(crate::smb::localize(&dir), name);
+    let p = join(delight_core::smb::localize(&dir), name);
     open_native(&p)
 }
 
@@ -78,7 +78,7 @@ fn open_native(p: &PathBuf) -> Result<(), String> {
 /// fails and its message is what the caller shows.
 #[tauri::command]
 pub fn show_info(dir: String, name: Option<String>) -> Result<(), String> {
-    let p = join(crate::smb::localize(&dir), name);
+    let p = join(delight_core::smb::localize(&dir), name);
     show_info_native(&p)
 }
 

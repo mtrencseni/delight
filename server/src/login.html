@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Delight</title>
+    <style>
+      :root {
+        --bg: #eceef2; --panel: #fff; --text: #1b1f27; --dim: #69707d;
+        --border: #dcdfe6; --accent: #4f7cf7; --err: #b3261e;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #262e38; --panel: #303841; --text: #d8dee9; --dim: #a6acb8;
+          --border: #414c59; --accent: #6699cc; --err: #ff8f88;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; min-height: 100dvh; display: grid; place-items: center;
+        background: var(--bg); color: var(--text); padding: 1.5rem;
+        font: 15px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
+      }
+      form {
+        width: 100%; max-width: 22rem; background: var(--panel); padding: 1.5rem;
+        border: 1px solid var(--border); border-radius: 0.75rem;
+      }
+      h1 { margin: 0 0 0.25rem; font-size: 1.375rem; }
+      p { margin: 0 0 1.25rem; color: var(--dim); font-size: 0.875rem; }
+      input {
+        width: 100%; padding: 0.625rem 0.75rem; font-size: 1rem; color: inherit;
+        background: var(--bg); border: 1px solid var(--border); border-radius: 0.5rem;
+      }
+      input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+      button {
+        width: 100%; margin-top: 0.75rem; padding: 0.625rem; font-size: 1rem;
+        font-weight: 600; color: #fff; background: var(--accent);
+        border: 0; border-radius: 0.5rem; cursor: pointer;
+      }
+      .err { margin: 0 0 0.75rem; color: var(--err); font-size: 0.875rem; }
+    </style>
+  </head>
+  <body>
+    <form method="post" action="/login">
+      <h1>Delight</h1>
+      <p>Paste the server token to browse this machine’s files.</p>
+      <!--ERROR-->
+      <input
+        type="password"
+        name="token"
+        autocomplete="current-password"
+        autofocus
+        placeholder="Token"
+        aria-label="Token"
+      />
+      <button type="submit">Sign in</button>
+    </form>
+  </body>
+</html>

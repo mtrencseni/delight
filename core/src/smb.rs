@@ -330,9 +330,8 @@ pub const NOT_SUPPORTED: &str =
 /// standard way to attach credentials to a server without mapping a drive).
 /// Windows keeps the session; subsequent UNC access under these credentials
 /// just works. Wrong credentials fail HERE, so nothing broken is ever cached.
-#[tauri::command]
 pub async fn smb_login(host: String, user: String, password: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || do_login(&host, &user, &password))
+    tokio::task::spawn_blocking(move || do_login(&host, &user, &password))
         .await
         .map_err(|e| e.to_string())?
 }

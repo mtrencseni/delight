@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
-use tauri::{AppHandle, Emitter};
+use crate::env::Sink;
 
 #[derive(Deserialize)]
 pub struct Item {
@@ -68,7 +68,6 @@ fn cancels() -> &'static Mutex<HashMap<String, Arc<AtomicBool>>> {
 }
 
 /// Ask a running operation to stop at the next file boundary.
-#[tauri::command]
 pub fn cancel_op(id: String) {
     if let Some(flag) = cancels().lock().unwrap().get(&id) {
         flag.store(true, Ordering::Relaxed);
@@ -89,7 +88,7 @@ struct Progress {
 /// Emits throttled "op-progress" events and carries the cancel flag. Registers the
 /// op in `cancels()` on creation and removes it on drop.
 pub(crate) struct Ctx {
-    app: AppHandle,
+    app: Sink,
     id: String,
     unit: &'static str,
     total: u64,
@@ -99,7 +98,7 @@ pub(crate) struct Ctx {
 }
 
 impl Ctx {
-    fn new(app: AppHandle, id: String, unit: &'static str, total: u64) -> Self {
+    fn new(app: Sink, id: String, unit: &'static str, total: u64) -> Self {
         let cancel = Arc::new(AtomicBool::new(false));
         cancels().lock().unwrap().insert(id.clone(), cancel.clone());
         let mut ctx = Ctx {
@@ -130,15 +129,16 @@ impl Ctx {
             return;
         }
         self.last = Instant::now();
-        let _ = self.app.emit(
+        self.app.emit(
             "op-progress",
-            Progress {
+            serde_json::to_value(Progress {
                 id: self.id.clone(),
                 done: self.done,
                 total: self.total,
                 current: current.to_string(),
-                unit: self.unit,
-            },
+                    unit: self.unit,
+            })
+            .unwrap_or_default(),
         );
     }
 }
@@ -284,9 +284,8 @@ fn dedup_target(dir: &Path, name: &str) -> PathBuf {
     candidate
 }
 
-#[tauri::command]
 pub async fn copy_entries(
-    app: AppHandle,
+    app: Sink,
     id: String,
     items: Vec<Item>,
     dest: String,
@@ -295,9 +294,8 @@ pub async fn copy_entries(
     run_op(app, id, items, dest, overwrite, false).await
 }
 
-#[tauri::command]
 pub async fn move_entries(
-    app: AppHandle,
+    app: Sink,
     id: String,
     items: Vec<Item>,
     dest: String,
@@ -313,7 +311,7 @@ pub(crate) const CANCELLED: &str = "\u{0}cancelled";
 /// member is streamed straight to its destination in a single pass over the
 /// archive; nothing is staged in a temp file.
 fn extract_op(
-    app: AppHandle,
+    app: Sink,
     id: String,
     items: Vec<Item>,
     dest: &Path,
@@ -450,7 +448,6 @@ fn materialize_link(out: &Path, target: &str) -> bool {
     if let Some(parent) = out.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let resolved = out.parent().map(|p| p.join(target)).unwrap_or_else(|| PathBuf::from(target));
     #[cfg(unix)]
     {
         let _ = fs::remove_file(out);
@@ -460,6 +457,10 @@ fn materialize_link(out: &Path, target: &str) -> bool {
     {
         // No symlink privilege in the general case: copy the target's contents
         // when it's something we just extracted, otherwise report it as skipped.
+        let resolved = out
+            .parent()
+            .map(|p| p.join(target))
+            .unwrap_or_else(|| PathBuf::from(target));
         if resolved.is_file() {
             return fs::copy(&resolved, out).is_ok();
         }
@@ -468,7 +469,7 @@ fn materialize_link(out: &Path, target: &str) -> bool {
 }
 
 async fn run_op(
-    app: AppHandle,
+    app: Sink,
     id: String,
     items: Vec<Item>,
     dest: String,
@@ -486,7 +487,7 @@ async fn run_op(
     if crate::sftp::is_sftp(&dest) {
         return Err("Copying TO a remote host isnâ€™t supported yet".into());
     }
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let dest = crate::smb::localize(&dest);
         let items = localize_items(items);
         // Archives are strictly read-only: never a destination, and copy-out only.
@@ -577,7 +578,7 @@ async fn run_op(
 /// Mirrors extract_op's shape: plan the tree first so the progress total is
 /// real, then stream each file, checking the cancel flag at chunk boundaries.
 async fn download_op(
-    app: AppHandle,
+    app: Sink,
     id: String,
     items: Vec<Item>,
     dest: String,
@@ -634,9 +635,8 @@ async fn download_op(
     Ok(res)
 }
 
-#[tauri::command]
 pub async fn rename_entry(dir: String, name: String, new_name: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let dir = crate::smb::localize(&dir);
         if Loc::parse(&dir).is_archive() {
             return Err("Canâ€™t rename inside an archive".into());
@@ -658,9 +658,8 @@ pub async fn rename_entry(dir: String, name: String, new_name: String) -> Result
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
 pub async fn create_folder(dir: String, name: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let dir = crate::smb::localize(&dir);
         if Loc::parse(&dir).is_archive() {
             return Err("Canâ€™t create a folder inside an archive".into());
@@ -743,8 +742,10 @@ fn entry_options(meta: &fs::Metadata) -> zip::write::SimpleFileOptions {
 }
 
 /// What the pack walk needs from the progress context. Keeping it behind a trait
-/// lets tests exercise the same code without a Tauri AppHandle.
-pub(crate) trait ProgressSink {
+/// lets tests exercise the same code without a Tauri Sink.
+/// What a long transfer reports to. Public because it appears in the signature
+/// of `sftp::download`, which callers outside this crate use.
+pub trait ProgressSink {
     fn cancelled(&self) -> bool;
     fn advance(&mut self, by: u64, current: &str);
 }
@@ -814,15 +815,14 @@ fn pack_dir<W: std::io::Write + std::io::Seek>(
 /// Alt+F5: pack the selection into a new zip in `dest`. Written to a ".part"
 /// file and renamed at the end, so a cancelled or failed pack never leaves an
 /// archive that looks complete.
-#[tauri::command]
 pub async fn create_archive(
-    app: AppHandle,
+    app: Sink,
     id: String,
     items: Vec<Item>,
     dest: String,
     name: String,
 ) -> Result<OpResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let dest = crate::smb::localize(&dest);
         let items = localize_items(items);
         if Loc::parse(&dest).is_archive() || items.iter().any(|it| Loc::parse(&it.dir).is_archive()) {
@@ -919,7 +919,7 @@ mod pack_tests {
         let stamp = filetime::FileTime::from_unix_time(1_614_834_368, 0);
         filetime::set_file_mtime(root.join("box/readme.txt"), stamp).unwrap();
 
-        // Drive the same walk the command uses, without needing an AppHandle.
+        // Drive the same walk the command uses, without needing an Sink.
         let target = unique_path(&out, "bundle", ".zip");
         {
             let f = fs::File::create(&target).unwrap();
@@ -1005,9 +1005,8 @@ mod meta_tests {
     }
 }
 
-#[tauri::command]
-pub async fn trash_entries(app: AppHandle, id: String, items: Vec<Item>) -> Result<OpResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub async fn trash_entries(app: Sink, id: String, items: Vec<Item>) -> Result<OpResult, String> {
+    tokio::task::spawn_blocking(move || {
         let items = localize_items(items);
         if items.first().is_some_and(|it| Loc::parse(&it.dir).is_archive()) {
             return Err("Canâ€™t delete inside an archive".into());

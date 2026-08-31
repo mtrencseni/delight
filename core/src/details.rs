@@ -48,7 +48,6 @@ fn split_ext(name: &str, is_dir: bool) -> Option<String> {
         .map(|e| e.to_string_lossy().into_owned())
 }
 
-#[tauri::command]
 pub async fn item_details(dir: String, name: Option<String>) -> Result<Details, String> {
     // Remote: what SFTP can answer (permissions, child preview). Creation time,
     // owner names and "opens with" have no remote equivalent and stay empty.
@@ -78,12 +77,12 @@ pub async fn item_details(dir: String, name: Option<String>) -> Result<Details, 
             Some(n) => archive::normalize_inner(&format!("{inner}/{n}")),
             None => inner,
         };
-        return tauri::async_runtime::spawn_blocking(move || archive_details(&archive, &inner))
+        return tokio::task::spawn_blocking(move || archive_details(&archive, &inner))
             .await
             .map_err(|e| e.to_string());
     }
     let p = join(dir, name);
-    tauri::async_runtime::spawn_blocking(move || gather(&p))
+    tokio::task::spawn_blocking(move || gather(&p))
         .await
         .map_err(|e| e.to_string())
 }
@@ -229,14 +228,13 @@ fn default_app(p: &Path) -> Option<(String, String)> {
 }
 
 /// QuickLook content thumbnail (macOS) as a PNG data URI, or None.
-#[tauri::command]
 pub async fn file_thumbnail(
     dir: String,
     name: Option<String>,
     size: u32,
 ) -> Result<Option<String>, String> {
     let p = join(crate::smb::localize(&dir), name);
-    tauri::async_runtime::spawn_blocking(move || thumbnail(&p, size))
+    tokio::task::spawn_blocking(move || thumbnail(&p, size))
         .await
         .map_err(|e| e.to_string())
 }
@@ -390,8 +388,8 @@ mod win_thumb_tests {
         if !p.exists() {
             return;
         }
-        let uri = tauri::async_runtime::block_on(async move {
-            tauri::async_runtime::spawn_blocking(move || super::thumbnail(&p, 256))
+        let uri = tokio::runtime::Runtime::new().unwrap().block_on(async move {
+            tokio::task::spawn_blocking(move || super::thumbnail(&p, 256))
                 .await
                 .unwrap()
         });

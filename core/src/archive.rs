@@ -99,7 +99,6 @@ pub struct Formats {
     suffixes: Vec<String>,
 }
 
-#[tauri::command]
 pub fn archive_formats() -> Formats {
     Formats {
         zip_exts: ZIP_EXTS.iter().map(|s| s.to_string()).collect(),
@@ -306,7 +305,6 @@ fn password_works(archive: &Path, password: &str) -> bool {
 
 /// Remember a password for `path`, but only after checking it works. Errors when
 /// it doesn't, so the UI asks again instead of caching a dud.
-#[tauri::command]
 pub fn set_archive_password(path: String, password: String) -> Result<(), String> {
     let archive = match Loc::parse(&path) {
         Loc::Archive { archive, .. } => archive,

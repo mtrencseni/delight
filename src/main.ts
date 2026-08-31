@@ -1,6 +1,6 @@
 import "./styles.css";
 import { invoke, isTauri, onEvent } from "./ipc";
-import { clearVisited, CODE_PREVIEW_BYTES, GRID_DEFAULT, GRID_MAX, GRID_MIN, hint, newTabId, normalizeColumnOrder, persist, PREVIEW_FONT_DEFAULT, PREVIEW_FONT_MAX, PREVIEW_FONT_MIN, PREVIEW_SIZES, PROGRESS_DELAYS, rebuildVisitedIndex, state, VISITED_SIZES, ZOOM_LEVELS } from "./state";
+import { clearVisited, CODE_PREVIEW_BYTES, GRID_DEFAULT, SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN, SPLIT_DEFAULT, SPLIT_MAX, SPLIT_MIN, GRID_MAX, GRID_MIN, hint, newTabId, normalizeColumnOrder, persist, PREVIEW_FONT_DEFAULT, PREVIEW_FONT_MAX, PREVIEW_FONT_MIN, PREVIEW_SIZES, PROGRESS_DELAYS, rebuildVisitedIndex, state, VISITED_SIZES, ZOOM_LEVELS } from "./state";
 import { isMac } from "./platform";
 import type { PaneState, SortDir, SortKey, Tab, Theme } from "./types";
 import { PaneView } from "./pane";
@@ -14,6 +14,7 @@ import { toggleKeyboardMap } from "./keyboardmap";
 import { ProgressHandle, type OpProgress } from "./progress";
 import { archiveFileFor, askArchivePassword, inArchive, isArchiveName, MARK, needsPassword, setArchiveFormats } from "./archive";
 import { isRemotePath } from "./sftp";
+import { isWeb } from "./target";
 import { icons } from "./icons";
 import { buildSettingsPage, type SettingsPage } from "./settingsPage";
 import { buildKeybindingsPage, type KeybindingsPage } from "./keybindingsPage";
@@ -69,6 +70,20 @@ class App {
   private commandHandlers: Record<CommandId, () => boolean | void> = {} as any;
 
   async init(): Promise<void> {
+    // Ask the server who it is before anything renders. An unauthenticated boot
+    // goes to the login page — nothing is built yet, so nothing is lost. Being
+    // merely OFFLINE must not redirect: every command below would fail anyway,
+    // and bouncing to a login page that also can't load helps nobody.
+    if (isWeb) {
+      const { whoami } = await import("./web");
+      const who = await whoami();
+      if (who.status === "unauth") {
+        location.replace(`/login?next=${encodeURIComponent(location.pathname)}`);
+        return;
+      }
+      if (who.status === "ok") this.webHost = who.hostname;
+    }
+
     const [saved, home, formats] = await Promise.all([
       invoke<any>("load_state").catch(() => null),
       invoke<string>("home_dir").catch(() => "/"),
@@ -78,6 +93,7 @@ class App {
     this.home = home;
     if (formats) setArchiveFormats(formats);
     this.restoreSettings(saved);
+    this.applySplit();
     document.documentElement.dataset.nameCase = state.settings.nameCase; // .pathinput / .locname case
     state.keybindings = mergeKeybindings(saved?.keybindings);
     state.columnOrder = normalizeColumnOrder(saved?.columnOrder);
@@ -241,6 +257,9 @@ class App {
       },
       favoritesLeft: () => this.openFavorites(0),
       favoritesRight: () => this.openFavorites(1),
+      downloadItems: () => void this.downloadSelection(),
+      uploadFiles: () => this.pickUpload(),
+      resetLayout: () => this.resetLayout("all"),
       drivesLeft: () => this.openDrives(0),
       drivesRight: () => this.openDrives(1),
       enterArchive: () => this.activePane()?.enterArchive(),
@@ -269,6 +288,16 @@ class App {
       );
     }
 
+    // A drop that misses a pane must do nothing at all — the browser's default
+    // is to navigate to the file, which would take the app down with it.
+    if (isWeb) {
+      for (const ev of ["dragover", "drop"] as const) {
+        document.addEventListener(ev, (e) => {
+          if ((e as DragEvent).dataTransfer?.types.includes("Files")) e.preventDefault();
+        });
+      }
+    }
+
     // Browser-only test hook (the preview harness drives the app through this).
     if (!isTauri) (window as any).__delight = this;
   }
@@ -288,6 +317,12 @@ class App {
       if (typeof s.previewIcons === "boolean") state.settings.previewIcons = s.previewIcons;
       if (typeof s.highlightToday === "boolean") state.settings.highlightToday = s.highlightToday;
       if (typeof s.stripedRows === "boolean") state.settings.stripedRows = s.stripedRows;
+      // Clamped on the way in: a hand-edited or older settings.json must not be
+      // able to collapse a pane to nothing.
+      if (typeof s.splitRatio === "number")
+        state.settings.splitRatio = clamp(s.splitRatio, SPLIT_MIN, SPLIT_MAX);
+      if (typeof s.sidebarWidth === "number")
+        state.settings.sidebarWidth = clamp(s.sidebarWidth, SIDEBAR_MIN, SIDEBAR_MAX);
       if (typeof s.sizeBars === "boolean") state.settings.sizeBars = s.sizeBars;
       if (typeof s.sizeBarLog === "boolean") state.settings.sizeBarLog = s.sizeBarLog;
       if (typeof s.previewPane === "boolean") state.settings.previewPane = s.previewPane;
@@ -412,6 +447,7 @@ class App {
         if (this.previewTarget && pane() === this.previewTarget) this.closePanePreview();
         tab.activePane = index;
         this.syncPaneActive(tab);
+        this.syncDocumentTitle();
       },
       changed: () => {
         // Keep an open preview alive when the browsed pane navigates or re-sorts —
@@ -491,8 +527,26 @@ class App {
     const dual = el("div", "dual");
     const pv0 = new PaneView(tab.panes![0], this.paneHost(tab, 0));
     const pv1 = new PaneView(tab.panes![1], this.paneHost(tab, 1));
+    // Dropping files from the desktop uploads them into the pane they landed on
+    // — the natural inverse of the desktop build's drag-out, and the reason the
+    // pane, not the window, is the drop target: which folder receives them
+    // should be the one under the cursor, not whichever pane was last active.
+    if (isWeb) {
+      this.acceptDrops(pv0);
+      this.acceptDrops(pv1);
+    }
     const sidebar = new FavSidebar(this.favSidebarHost(tab));
-    dual.append(sidebar.el, pv0.el, pv1.el);
+    // Two drag handles, one per boundary. Both are always in the DOM; the
+    // stylesheet shows whichever the current layout actually has a boundary at
+    // — sidebar|pane only in single-pane mode, pane|pane whenever the second
+    // pane is on screen.
+    const dSide = el("div", "divider side");
+    const dPanes = el("div", "divider panes");
+    dSide.title = "Drag to resize · double-click to reset";
+    dPanes.title = dSide.title;
+    dual.append(sidebar.el, dSide, pv0.el, dPanes, pv1.el);
+    this.wireDivider(dSide, dual, "sidebar");
+    this.wireDivider(dPanes, dual, "panes");
     wrap.append(dual);
     this.contentEl.append(wrap);
 
@@ -855,6 +909,7 @@ class App {
     this.tabsEl.replaceChildren(filesFrag);
     this.sysTabsEl.replaceChildren(sysFrag);
     this.fitTabTitles();
+    this.syncDocumentTitle();
   }
 
   /** Reflect the active tab without rebuilding the strip — keeps element
@@ -1040,6 +1095,231 @@ class App {
           ? `${past} ${done}, skipped ${res.skipped.length}`
           : `${past} ${this.plural(done, "item")}`
       );
+    }
+  }
+
+  // ---- pane dividers -------------------------------------------------------------
+
+  /** Push the current split into CSS. One variable per boundary, read by the
+      rules in styles.css, so the layout survives a re-render without either
+      pane being measured or positioned from JS. */
+  /** The server's own name, learned at boot; empty until then (and always, on
+      the desktop, where the window title is Tauri's business). */
+  private webHost = "";
+
+  /** "<host>:<path>" in the browser tab, so several servers open in several
+      tabs stay tellable apart at a glance. Called from renderTabstrip, which
+      already runs on every navigation, tab switch and single-pane toggle. */
+  private syncDocumentTitle(): void {
+    if (!isWeb) return;
+    const tab = state.tabs[state.activeTab];
+    const path = this.activePane()?.currentPath();
+    const what = path ? withSep(path, state.settings.pathSep) : tab ? this.tabTitle(tab) : "";
+    document.title = this.webHost ? `${this.webHost}:${what}` : what || "Delight";
+  }
+
+  private applySplit(): void {
+    const r = document.documentElement.style;
+    r.setProperty("--split-left", String(state.settings.splitRatio));
+    r.setProperty("--split-right", String(1 - state.settings.splitRatio));
+    r.setProperty("--sidebar-w", `${state.settings.sidebarWidth}rem`);
+  }
+
+  /** Drag to resize, double-click to reset — the two idioms every split view
+      has, so neither needs explaining. Pointer events (not mouse) so a trackpad
+      or a touchscreen drags identically, and capture so the pointer can leave
+      the 8px handle mid-drag without dropping it. */
+  private wireDivider(handle: HTMLElement, dual: HTMLElement, which: "sidebar" | "panes"): void {
+    handle.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      handle.setPointerCapture(e.pointerId);
+      handle.classList.add("dragging");
+      document.body.classList.add("col-resizing");
+      const startX = e.clientX;
+      const startSidebar = state.settings.sidebarWidth;
+      const startRatio = state.settings.splitRatio;
+      // rem, so the drag stays 1:1 with the pointer at any zoom level.
+      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+
+      const move = (ev: PointerEvent) => {
+        const dx = ev.clientX - startX;
+        if (which === "sidebar") {
+          state.settings.sidebarWidth = clamp(startSidebar + dx / rem, SIDEBAR_MIN, SIDEBAR_MAX);
+        } else {
+          // The ratio is of the space the two panes share, which is the row
+          // minus whatever the sidebar and the handles are taking.
+          const span = dual.getBoundingClientRect().width - this.nonPaneWidth(dual);
+          if (span > 0) state.settings.splitRatio = clamp(startRatio + dx / span, SPLIT_MIN, SPLIT_MAX);
+        }
+        this.applySplit();
+      };
+      const up = () => {
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", up);
+        handle.removeEventListener("pointercancel", up);
+        handle.classList.remove("dragging");
+        document.body.classList.remove("col-resizing");
+        persist();
+      };
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", up);
+      handle.addEventListener("pointercancel", up);
+    });
+
+    handle.addEventListener("dblclick", () => this.resetLayout(which));
+  }
+
+  /** Everything in the row that isn't one of the two panes: the sidebar when
+      it's showing, plus every visible handle. */
+  private nonPaneWidth(dual: HTMLElement): number {
+    let w = 0;
+    for (const child of dual.children) {
+      const e = child as HTMLElement;
+      if (e.classList.contains("pane")) continue;
+      w += e.getBoundingClientRect().width;
+    }
+    return w;
+  }
+
+  /** Put one boundary — or both — back where it started. */
+  resetLayout(which: "sidebar" | "panes" | "all" = "all"): void {
+    if (which !== "panes") state.settings.sidebarWidth = SIDEBAR_DEFAULT;
+    if (which !== "sidebar") state.settings.splitRatio = SPLIT_DEFAULT;
+    this.applySplit();
+    persist();
+    toast(which === "all" ? "Layout reset" : "Reset");
+  }
+
+  /** Make one pane a drop target for files dragged in from the OS. */
+  private acceptDrops(pane: PaneView): void {
+    // dragover must preventDefault or the drop never fires; without the
+    // document-level pair, a miss navigates the page to the dropped file and
+    // the app is simply gone.
+    const over = (e: DragEvent) => {
+      if (!e.dataTransfer?.types.includes("Files")) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      pane.el.classList.add("droptarget");
+    };
+    pane.el.addEventListener("dragover", over);
+    pane.el.addEventListener("dragenter", over);
+    pane.el.addEventListener("dragleave", (e) => {
+      // Leaving for a child element is not leaving the pane.
+      if (!pane.el.contains(e.relatedTarget as Node)) pane.el.classList.remove("droptarget");
+    });
+    pane.el.addEventListener("drop", (e) => {
+      e.preventDefault();
+      pane.el.classList.remove("droptarget");
+      const files = [...(e.dataTransfer?.files ?? [])];
+      if (files.length) void this.uploadInto(pane, files);
+    });
+  }
+
+  // ---- upload / download (web build) -------------------------------------------
+  //
+  // On the desktop these have no meaning: the files are already on the machine,
+  // and things leave by being dragged into Finder. In the browser they are the
+  // third axis — the panes both show the SERVER's filesystem, so F5/F6 move
+  // files around over there, and these two move them between there and here.
+
+  /** Send the active pane's selection to the browser. One file streams as
+      itself; anything else (several items, or a folder) goes through the zip
+      endpoint, which packs on the server so nothing large is held in memory
+      here. */
+  private async downloadSelection(): Promise<void> {
+    const p = this.activePane();
+    if (!p) return;
+    const items = p.selectedItems();
+    if (!items.length) return;
+    // Inside an archive, or on a remote host, there is no file on the server's
+    // disk to stream — the same reason the PDF preview reads those through the
+    // command channel instead.
+    if (p.isReadOnly() || isRemotePath(p.currentPath())) {
+      toast("Copy it out first (F5), then download");
+      return;
+    }
+    const { downloadUrl, zipUrl } = await import("./web");
+    const single = items.length === 1 && !items[0].isDir;
+    if (single) {
+      this.startDownload(downloadUrl(items[0].dir, items[0].name));
+      return;
+    }
+    const base = baseName(p.currentPath()) || "delight";
+    const paths = items.map((it) => this.childPath(it.dir, it.name));
+    this.startDownload(zipUrl(paths, `${base}.zip`));
+    toast(`Zipping ${this.plural(items.length, "item")}…`);
+  }
+
+  /** Hand a URL to the browser's own download machinery. An anchor click rather
+      than location.href: navigating away would tear down the app, and a
+      Content-Disposition response on an <a download> keeps the page put. */
+  private startDownload(url: string): void {
+    const a = document.createElement("a");
+    a.href = url;
+    a.rel = "noopener";
+    a.click();
+  }
+
+  private pickUpload(): void {
+    const p = this.activePane();
+    if (!p) return;
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.addEventListener("change", () => {
+      void this.uploadInto(p, [...(input.files ?? [])]);
+    });
+    input.click();
+  }
+
+  /** Copy files from this machine into `pane`'s directory, reporting through
+      the same progress card copy and move use. The server writes each one to a
+      .part file and renames it on the last chunk, so an interrupted upload
+      leaves something obviously unfinished rather than a truncated file that
+      looks whole. */
+  async uploadInto(pane: PaneView, files: File[]): Promise<void> {
+    if (!files.length) return;
+    if (pane.isReadOnly()) {
+      toast("Can’t write into an archive");
+      return;
+    }
+    const dir = pane.currentPath();
+    if (isRemotePath(dir)) {
+      toast("Remote folders are read-only for now");
+      return;
+    }
+    const { uploadFile } = await import("./web");
+    const total = files.reduce((n, f) => n + f.size, 0);
+    const id = `upload-${Date.now()}`;
+    const abort = new AbortController();
+    const handle = new ProgressHandle({
+      title: "Uploading",
+      onCancel: () => abort.abort(),
+      delayMs: state.settings.progressDelayMs,
+    });
+    let base = 0;
+    let done = 0;
+    try {
+      for (const file of files) {
+        await uploadFile(
+          dir,
+          file,
+          (sent) => {
+            handle.update({ id, done: base + sent, total, current: file.name, unit: "bytes" });
+          },
+          abort.signal
+        );
+        base += file.size;
+        done++;
+      }
+      toast(`Uploaded ${this.plural(done, "file")}`);
+    } catch (e) {
+      // An abort is the user's own doing, so it reports as a stop, not a failure.
+      toast(abort.signal.aborted ? `Cancelled — uploaded ${done} before stopping` : String(e));
+    } finally {
+      handle.close();
+      await pane.softReload();
     }
   }
 

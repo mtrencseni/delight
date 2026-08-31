@@ -341,14 +341,70 @@ body.tab-dragging * {
 .dual {
   flex: 1;
   display: flex;
-  gap: 0.5rem;
+  /* No gap: the dividers ARE the gap now, and they have to be real elements to
+     be draggable. Each is 0.5rem wide, so the spacing is what it always was. */
+  gap: 0;
   min-width: 0;
+}
+
+/* ---------- pane dividers ----------
+   Two boundaries exist in the layout — sidebar|pane and pane|pane — and each
+   gets a handle. Which ones are visible follows from which neighbours are:
+   the sidebar only appears in single-pane mode, and the second pane only when
+   there are two of them (or when it's standing in as the preview).
+
+   The grab area is wider than the line it draws, because a 1px target is a
+   frustration; the visible rule is a ::before inside it. */
+.divider {
+  flex: 0 0 0.5rem;
+  position: relative;
+  cursor: col-resize;
+  touch-action: none; /* the pointer drag owns the gesture, not the scroller */
+}
+
+.divider::before {
+  content: "";
+  position: absolute;
+  inset: 0 0.1875rem;
+  border-radius: 1px;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.divider:hover::before,
+.divider.dragging::before {
+  background: var(--accent);
+}
+
+/* Two panes side by side: only the pane|pane handle has a boundary to sit on. */
+.dual:not(.single) > .divider.side {
+  display: none;
+}
+
+/* Single-pane: the sidebar handle appears, and the pane|pane one only survives
+   while the second pane is standing in as the preview. */
+.dual.single > .divider.panes {
+  display: none;
+}
+
+.dual.single:has(> .pane:last-child.previewing) > .divider.panes {
+  display: block;
+}
+
+/* While dragging, nothing else should take the pointer or paint a selection. */
+body.col-resizing {
+  cursor: col-resize;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* ---------- pane ---------- */
 .pane {
   position: relative; /* anchor for the locations popover */
-  flex: 1 1 0;
+  /* Grow in proportion to the split, which main.ts keeps in these variables.
+     flex-basis 0 so the ratio decides the width outright rather than being
+     applied on top of each pane's content width. */
+  flex: var(--split-left, 0.5) 1 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -357,6 +413,10 @@ body.tab-dragging * {
   border-radius: 0.5rem;
   overflow: hidden;
   transition: border-color 0.12s ease;
+}
+
+.dual > .pane:last-child {
+  flex-grow: var(--split-right, 0.5);
 }
 
 .pane.is-active {
@@ -1653,7 +1713,7 @@ body.fav-dragging * {
 
 .dual.single .favsidebar {
   display: flex;
-  flex: 0 0 13rem;
+  flex: 0 0 var(--sidebar-w, 13rem);
   flex-direction: column;
   min-width: 0;
   background: var(--panel);
@@ -2601,4 +2661,10 @@ body.fav-dragging * {
 
 .connect-recent:hover {
   background: var(--hover);
+}
+
+/* A pane accepting a file drop from the desktop (web build). Inset rather than
+   an outline so it doesn't shift the layout mid-drag. */
+.pane.droptarget {
+  box-shadow: inset 0 0 0 2px var(--accent);
 }

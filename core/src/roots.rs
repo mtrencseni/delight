@@ -44,7 +44,6 @@ fn native_roots() -> Vec<FsRoot> {
     roots
 }
 
-#[tauri::command]
 pub fn fs_roots() -> Vec<FsRoot> {
     native_roots()
 }
@@ -54,10 +53,8 @@ pub fn fs_roots() -> Vec<FsRoot> {
 /// Dropbox records its real location in `~/.dropbox/info.json` (the folder moved
 /// under `~/Library/CloudStorage/…` in recent versions, so a fixed `~/Dropbox`
 /// guess is unreliable). We read that first, then fall back to the common spots.
-#[tauri::command]
-pub fn dropbox_dir(app: tauri::AppHandle) -> Option<String> {
-    use tauri::Manager;
-    let home = app.path().home_dir().ok()?;
+pub fn dropbox_dir(env: &crate::env::Env) -> Option<String> {
+    let home = env.home.clone()?;
 
     // 1) Authoritative: the path recorded in Dropbox's own info.json.
     for rel in [".dropbox/info.json", ".config/dropbox/info.json"] {

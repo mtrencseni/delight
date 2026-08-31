@@ -1,4 +1,5 @@
 import { assetUrl, invoke, isTauri } from "./ipc";
+import { isMock } from "./target";
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import type { ChildEntry, ColKey, ColWidths, Details, Entry, Listing, Location, PaneState, SortDir, SortKey, ViewMode } from "./types";
 import { baseName, clamp, displaySep, driveLetter, fmtDate, humanSize, isDriveRoot, recency, toSystemSep, withSep } from "./format";
@@ -128,6 +129,12 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.closePath();
 }
 
+/** `dir` + `name`, keeping whichever separator the path already uses. */
+function childOf(dir: string, name: string): string {
+  const sep = dir.includes("\\") ? "\\" : "/";
+  return dir.replace(/[\\/]+$/, "") + sep + name;
+}
+
 export class PaneView {
   readonly st: PaneState;
   readonly el: HTMLElement;
@@ -183,6 +190,13 @@ export class PaneView {
   /** Opposite-pane preview: debounce the thumbnail fetch + track the shown item. */
   private previewTimer = 0;
   private previewKey = "";
+  /** The file the preview is showing, and its last seen signature — the pair the
+      watcher needs to notice an edit made by something else. Empty path = there
+      is nothing pollable on screen (a directory, or `..`). */
+  private previewPath = "";
+  private previewSig: number | null = null;
+  private previewEntry: Entry | null = null;
+  private previewDir = "";
   /** Read-only CodeMirror view for text-file previews (lazily created, reused). */
   private codePreview: CodePreview | null = null;
   /** Whether the currently-shown preview is the code preview (vs a thumbnail). */
@@ -399,14 +413,36 @@ export class PaneView {
       folder's mtime so it also notices an existing file's size/perms change, not
       just added/removed entries. */
   private startWatch(): void {
-    if (!isTauri) return;
+    // The mock has no filesystem to change underneath us. The server does — and
+    // answers dir_signature — so the web build polls exactly like the desktop.
+    if (isMock) return;
     this.watchTimer = window.setInterval(() => void this.checkDirChanged(), 1500);
     // Refocusing the app is the common "I did something elsewhere" moment —
     // check immediately rather than waiting for the next poll tick.
     window.addEventListener("focus", () => void this.checkDirChanged());
   }
 
+  /** Has the previewed file changed underneath us? The listing watcher won't
+      catch it: the preview shows a file in the OTHER pane's directory, which
+      this pane isn't watching. Re-showing rebuilds whichever preview kind is up
+      — code, image or PDF — through the one entry point. */
+  private async checkPreviewChanged(): Promise<void> {
+    if (!this.isPreviewing() || !this.previewPath) return;
+    const path = this.previewPath;
+    const sig = await invoke<number | null>("file_signature", { path }).catch(() => null);
+    if (path !== this.previewPath) return; // moved on while we asked
+    const was = this.previewSig;
+    this.previewSig = sig;
+    if (sig == null || was == null || sig === was) return;
+    const entry = this.previewEntry;
+    if (!entry) return;
+    // showPreview short-circuits on an unchanged key, so clear it first.
+    this.previewKey = "";
+    this.showPreview(entry, this.previewDir);
+  }
+
   private async checkDirChanged(): Promise<void> {
+    void this.checkPreviewChanged();
     const path = this.st.path;
     // No polling over the network: a listing every 1.5 s is the kind of chatter
     // NAS logs are full of, and over SFTP it's a round trip. Remote panes
@@ -2573,13 +2609,23 @@ export class PaneView {
   showPreview(entry: Entry, dirPath: string): void {
     const key = entry === UP_ENTRY ? " up" : `${dirPath} ${entry.name}`;
     this.previewKey = key;
+    // What the change-watcher polls (see checkPreviewChanged). Adopting the
+    // signature lazily — null until the first poll — means a file that changed
+    // between opening the preview and the first tick still refreshes.
+    this.previewPath =
+      entry === UP_ENTRY || entry.isDir ? "" : childOf(dirPath, entry.name);
+    this.previewSig = null;
+    this.previewEntry = entry;
+    this.previewDir = dirPath;
     clearTimeout(this.previewTimer);
 
-    // PDF → embed the native PDF viewer (crisp + scrollable) via the asset
-    // protocol, instead of the OS thumbnail (which Windows caps at 256px). Native
-    // only; the browser mock has no asset protocol, so PDFs fall through to the
-    // thumbnail path below there.
-    if (isTauri && entry !== UP_ENTRY && !entry.isDir && /\.pdf$/i.test(entry.name)) {
+    // PDF → embed the browser's own PDF viewer (crisp + scrollable) instead of
+    // the OS thumbnail (which Windows caps at 256px). Under Tauri that is the
+    // asset protocol; in the web build it is the server's /api/file, which
+    // honours Range requests — so a 400-page document opens without being
+    // fetched whole. Only the mock has no URL to point at, so PDFs fall through
+    // to the thumbnail path there.
+    if (!isMock && entry !== UP_ENTRY && !entry.isDir && /\.pdf$/i.test(entry.name)) {
       this.showPdfPreview(entry, dirPath, key);
       return;
     }

@@ -4,8 +4,12 @@
 // keyboard handler matches a pressed combo against them and runs the command.
 
 import { MOD, isMac } from "./platform";
+import { isWeb } from "./target";
 
 export type CommandId =
+  | "resetLayout"
+  | "downloadItems"
+  | "uploadFiles"
   | "newTab"
   | "closeTab"
   | "nextTab"
@@ -201,6 +205,18 @@ export const COMMANDS: Command[] = [
   // Favorites
   { id: "favoritesLeft", label: "Favorites — left pane", short: "Favorites L", group: "Favorites", defaults: [`${MOD}+Digit1`] },
   { id: "favoritesRight", label: "Favorites — right pane", short: "Favorites R", group: "Favorites", defaults: [`${MOD}+Digit2`] },
+
+  { id: "resetLayout", label: "Reset pane layout", short: "Reset panes", group: "View", defaults: [] },
+
+  // Web build only. On the desktop the files are already on this machine, so
+  // "download" means nothing and getting files in is a drag from Finder.
+  // Shift-modified so they clear Chrome's own Ctrl+S / Ctrl+U.
+  ...(isWeb
+    ? ([
+        { id: "downloadItems", label: "Download selection", short: "Download", group: "Files", defaults: [`${MOD}+Shift+KeyS`] },
+        { id: "uploadFiles", label: "Upload files here", short: "Upload", group: "Files", defaults: [`${MOD}+Shift+KeyU`] },
+      ] as Command[])
+    : []),
 
   // Drives (Windows/Linux only — a single root on macOS makes a drive picker
   // meaningless, so these commands aren't registered there). Alt+F1/F2 open a

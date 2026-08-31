@@ -117,6 +117,13 @@ export interface Settings {
   previewIcons: boolean;
   /** Tint the modified time green for files changed today. */
   highlightToday: boolean;
+  /** Share of the two-pane area given to the LEFT pane, 0..1. Drag the divider
+      between the panes to change it; double-click the divider to reset. Global
+      rather than per-tab, like the column widths — panes whose proportions
+      disagree make the eye re-parse the layout on every glance across. */
+  splitRatio: number;
+  /** Width, in rem, of the Favorites sidebar in single-pane mode. */
+  sidebarWidth: number;
   /** Alternating row background colors (zebra striping) in list & chips views. */
   stripedRows: boolean;
   /** Show a proportional data bar behind file sizes. */

@@ -8,7 +8,6 @@
 use base64::Engine;
 use std::path::PathBuf;
 
-#[tauri::command]
 pub async fn file_icon(
     dir: String,
     name: Option<String>,
@@ -19,7 +18,7 @@ pub async fn file_icon(
         p.push(n);
     }
     // Icon lookup can touch disk; keep it off the UI/runtime thread.
-    tauri::async_runtime::spawn_blocking(move || icon_data_uri(&p, size))
+    tokio::task::spawn_blocking(move || icon_data_uri(&p, size))
         .await
         .map_err(|e| e.to_string())
 }

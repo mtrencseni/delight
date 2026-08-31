@@ -615,6 +615,10 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
       return { done, skipped: [], cancelled: false } as T;
     }
 
+    // The mock filesystem only changes when the app itself changes it, so a
+    // stable signature is the honest answer: nothing edits these files behind us.
+    case "file_signature":
+      return 1 as T;
     case "dir_signature": {
       const rec = dirRecord(String(args?.path ?? ""));
       if (!rec) return null as T;

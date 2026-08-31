@@ -3,6 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- The same art Tauri generated icon.icns from, so the browser tab carries
+         the Mac app's icon rather than a lookalike. Harmless under Tauri, which
+         shows the bundle icon and ignores these. -->
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" href="/favicon.png" type="image/png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!-- Replaced at runtime with "<host>:<path>" once the server says who it
+         is; this is only what shows while the first listing is in flight. -->
     <title>Delight</title>
   </head>
   <body>

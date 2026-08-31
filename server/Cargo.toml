@@ -1,0 +1,33 @@
+[package]
+name = "delight-server"
+version = "0.2.0"
+description = "Delight Commander — the HTTP backend behind the web UI"
+authors = ["Marton Trencseni"]
+edition = "2021"
+
+[[bin]]
+name = "delight-server"
+path = "src/main.rs"
+
+[dependencies]
+delight-core = { path = "../core" }
+axum = { version = "0.7", features = ["multipart"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["fs"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures-util = { version = "0.3", default-features = false }
+# SSE: the progress stream is easiest to express as a generator.
+async-stream = "0.3"
+# The session cookie is signed rather than stored: one HMAC over the issue time,
+# keyed by a value derived from the shared token, so rotating the token
+# invalidates every browser session without a session table to clear.
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+# Content-Type for /api/file, so Chrome's PDF viewer and <img> get what they need.
+mime_guess = "2"
+# Streaming zip for multi-file download.
+zip = { version = "2", default-features = false, features = ["deflate"] }

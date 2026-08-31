@@ -20,6 +20,19 @@ export const PREVIEW_FONT_DEFAULT = 13;
 export const PREVIEW_FONT_MIN = 9;
 export const PREVIEW_FONT_MAX = 32;
 
+/** Pane divider limits. A pane narrower than ~15% can't show a usable name
+    column, and letting one collapse entirely would hide the fact that it's
+    still there. */
+export const SPLIT_DEFAULT = 0.5;
+export const SPLIT_MIN = 0.15;
+export const SPLIT_MAX = 0.85;
+
+/** Favorites sidebar width in rem (single-pane mode). The default matches what
+    the stylesheet used before it became draggable. */
+export const SIDEBAR_DEFAULT = 13;
+export const SIDEBAR_MIN = 8;
+export const SIDEBAR_MAX = 30;
+
 export const state = {
   tabs: [] as Tab[],
   activeTab: 0,
@@ -39,6 +52,8 @@ export const state = {
     launchApps: true,
     previewIcons: false,
     highlightToday: true,
+    splitRatio: SPLIT_DEFAULT,
+    sidebarWidth: SIDEBAR_DEFAULT,
     stripedRows: true,
     sizeBars: true,
     sizeBarLog: false,

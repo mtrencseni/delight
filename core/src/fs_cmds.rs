@@ -5,7 +5,7 @@ use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
-use tauri::Manager;
+use crate::env::Env;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -197,9 +197,8 @@ fn resolve(path: &str, child: Option<String>) -> Loc {
     }
 }
 
-#[tauri::command]
 pub async fn list_dir(
-    app: tauri::AppHandle,
+    env: &Env,
     path: String,
     child: Option<String>,
 ) -> Result<Listing, String> {
@@ -208,8 +207,8 @@ pub async fn list_dir(
     if sftp::is_sftp(&path) {
         return sftp::list(&path, child.as_deref()).await;
     }
-    let home = app.path().home_dir().ok();
-    tauri::async_runtime::spawn_blocking(move || {
+    let home = env.home.clone();
+    tokio::task::spawn_blocking(move || {
         if smb::is_smb(&path) {
             return smb_list(&path, child, home);
         }
@@ -312,30 +311,27 @@ fn smb_list(_path: &str, _child: Option<String>, _home: Option<PathBuf>) -> Resu
     Err(smb::NOT_SUPPORTED.into())
 }
 
-#[tauri::command]
-pub fn home_dir(app: tauri::AppHandle) -> Result<String, String> {
-    app.path()
-        .home_dir()
+pub fn home_dir(env: &Env) -> Result<String, String> {
+    env.home
+        .as_ref()
         .map(|p| p.to_string_lossy().into_owned())
-        .map_err(|e| e.to_string())
+        .ok_or_else(|| "no home directory".to_string())
 }
 
 /// The user's Desktop. Asked of the OS rather than joined onto the home
 /// directory: the folder is localized, and Windows lets it be redirected —
 /// OneDrive does exactly that by default — so `<home>/Desktop` is often simply
 /// the wrong place, or no place at all.
-#[tauri::command]
-pub fn desktop_dir(app: tauri::AppHandle) -> Result<String, String> {
-    app.path()
-        .desktop_dir()
+pub fn desktop_dir(env: &Env) -> Result<String, String> {
+    env.desktop
+        .as_ref()
         .map(|p| p.to_string_lossy().into_owned())
-        .map_err(|e| e.to_string())
+        .ok_or_else(|| "no desktop directory".to_string())
 }
 
 /// A directory's modified time in epoch millis. Bumps whenever an entry is
 /// added or removed (used by the frontend to auto-refresh a pane when its
 /// folder changes on disk). Read-only stat; None if the dir is gone/unreadable.
-#[tauri::command]
 pub fn dir_mtime(path: String) -> Option<u64> {
     let path = smb::localize(&path);
     // Inside an archive the archive file's own mtime is the answer: its contents
@@ -353,12 +349,46 @@ pub fn dir_mtime(path: String) -> Option<u64> {
         .map(|d| d.as_millis() as u64)
 }
 
+/// The same idea as [`dir_signature`], for ONE file: size and modified time,
+/// folded together. The preview polls this so an editor saving over the file
+/// being previewed refreshes it, rather than leaving yesterday's text on screen
+/// looking current.
+///
+/// A member inside an archive is stamped by its archive, since the archive is
+/// what would have to change for the member to. Remote paths opt out for the
+/// same reason directory polling does: a poll every 1.5 s over SFTP is chatty
+/// for a question that navigation already answers.
+pub fn file_signature(path: String) -> Option<u64> {
+    if sftp::is_sftp(&path) {
+        return None;
+    }
+    let path = smb::localize(&path);
+    let (a, b) = match Loc::parse(&path) {
+        Loc::Archive { archive, .. } => archive::stamp(&archive).ok()?,
+        Loc::Local(p) => {
+            let m = fs::metadata(&p).ok()?;
+            let mtime = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            (mtime, m.len())
+        }
+    };
+    let mut h: u64 = 0xcbf29ce484222325;
+    for v in [a, b] {
+        h ^= v;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    Some(h)
+}
+
 /// An order-independent hash of the directory's entries folding in each one's
 /// name, size, modified time and permissions. Unlike the folder's own mtime
 /// (which only bumps on add/remove/rename), this also changes when an existing
 /// file's content/size or permissions change — so the auto-refresh watcher can
 /// notice in-place edits. Read-only; None if the dir is gone/unreadable.
-#[tauri::command]
 pub fn dir_signature(path: String) -> Option<u64> {
     // Remote: polling a listing every 1.5 s would be chatty over the network
     // (the frontend also skips these paths); navigation refreshes instead.
@@ -434,14 +464,13 @@ pub struct TextFile {
 /// Read a text file for the read-only code preview (never mutates anything).
 /// Reads at most `max_bytes` so a huge/binary file can't stall the UI, and
 /// reports back whether it truncated or the content looked binary.
-#[tauri::command]
 pub async fn read_text_file(dir: String, name: String, max_bytes: usize) -> Result<TextFile, String> {
     if sftp::is_sftp(&dir) {
         let cap = max_bytes.max(1);
         let (buf, truncated) = sftp::read_file(&dir, &name, cap).await?;
         return Ok(text_file(buf, truncated, cap));
     }
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         use std::io::Read;
         let dir = smb::localize(&dir);
         let cap = max_bytes.max(1);
@@ -509,14 +538,13 @@ pub struct BinaryFile {
 /// Read a whole (small) file for embedding in the webview. Used where there is
 /// no local path to hand the asset protocol: inside archives and over SFTP.
 /// Capped, and honest about hitting the cap.
-#[tauri::command]
 pub async fn read_file_bytes(dir: String, name: String, max_bytes: usize) -> Result<BinaryFile, String> {
     use base64::Engine;
     let cap = max_bytes.max(1);
     let (buf, truncated) = if sftp::is_sftp(&dir) {
         sftp::read_file(&dir, &name, cap).await?
     } else {
-        tauri::async_runtime::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || {
             use std::io::Read;
             let dir = smb::localize(&dir);
             match Loc::parse(&dir) {
@@ -552,7 +580,6 @@ pub async fn read_file_bytes(dir: String, name: String, max_bytes: usize) -> Res
 /// path rather than Delight's portable one — today just the asset protocol,
 /// which serves the PDF preview. smb:// becomes a UNC path; everything else
 /// passes through unchanged.
-#[tauri::command]
 pub fn native_path(path: String) -> String {
     smb::localize(&path)
 }
@@ -567,12 +594,11 @@ pub struct DiskSpace {
 /// Total + free bytes on the volume that holds `path`. Used to show disk usage in
 /// the path bar at a drive root and beside a drive-root favorite. None if the
 /// path can't be queried.
-#[tauri::command]
 pub async fn disk_space(path: String) -> Option<DiskSpace> {
     if sftp::is_sftp(&path) {
         return None; // no statvfs in base SFTP; the readout just hides
     }
-    tauri::async_runtime::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let path = smb::localize(&path);
         // Meaningless inside an archive — the UI already handles None.
         if Loc::parse(&path).is_archive() {
@@ -594,7 +620,6 @@ pub async fn disk_space(path: String) -> Option<DiskSpace> {
 /// Recursively sum the sizes of every regular file under `dir` (Space on a folder
 /// → its total size in the Size column). Symlinks are not followed, so cycles
 /// can't trap the walk. Runs off the UI thread; can be slow for large trees.
-#[tauri::command]
 pub async fn dir_size(path: String) -> u64 {
     // A recursive size walk over SFTP is a round trip per directory; not worth
     // it for a column value. Remote folders show no total in v1.
@@ -602,7 +627,7 @@ pub async fn dir_size(path: String) -> u64 {
         return 0;
     }
     let path = smb::localize(&path);
-    tauri::async_runtime::spawn_blocking(move || match Loc::parse(&path) {
+    tokio::task::spawn_blocking(move || match Loc::parse(&path) {
         // Free from the index — no walk, no decompression.
         Loc::Archive { archive, inner } => archive::index_for(&archive)
             .map(|ix| ix.size_under(&inner))

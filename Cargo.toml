@@ -1,0 +1,17 @@
+# Delight is three Rust crates now: the filesystem core, and the two hosts that
+# drive it.
+#
+#   core/       delight-core  — all the filesystem work, no UI, no Tauri
+#   src-tauri/  delight       — the desktop app (macOS, Windows)
+#   server/     delight-server— the HTTP backend behind the web UI (Linux)
+#
+# The split exists because the web port must not link a webview: Tauri drags in
+# GTK/WebKitGTK on Linux, which a headless server has no business needing. Only
+# `core` and `server` build there; `src-tauri` builds on the desktop platforms.
+# Build one at a time (`cargo check -p delight-core`), not the whole workspace.
+[workspace]
+resolver = "2"
+members = ["core", "server", "src-tauri"]
+
+[profile.release]
+strip = true

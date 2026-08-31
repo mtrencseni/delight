@@ -14,104 +14,21 @@ tauri-build = { version = "2", features = [] }
 cc = "1"
 
 [dependencies]
+# The filesystem core, shared with delight-server. Everything this crate does
+# beyond opening a window is a thin wrapper over it (see lib.rs).
+delight-core = { path = "../core" }
 # `devtools` keeps the WKWebView Web Inspector available in release builds
 # (gated at runtime by the "Enable developer tools" setting).
 tauri = { version = "2", features = ["protocol-asset", "devtools"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-base64 = "0.22"
 tauri-plugin-drag = "2.1.1"
 tauri-plugin-window-state = "2.4.1"
-# Cross-platform "move to Trash/Recycle Bin" for the delete operation.
-trash = "5"
-# canonicalize without the Windows \\?\ verbatim prefix (no-op elsewhere), so the
-# path bar shows C:\Users\… not \\?\C:\Users\…. Only simplifies when it's safe.
-dunce = "1"
-# Cross-platform total/free disk space for a path (drive-root disk usage readout).
-fs2 = "0.4"
-# Read-only archive browsing (zip family). Pure Rust only — default features pull
-# in C-backed codecs (bzip2/lzma/zstd); "deflate" routes through flate2's
-# miniz_oxide backend, so there's no C toolchain dependency on any platform.
-# "aes-crypto" is pure Rust (the `aes`/`sha1`/`hmac` crates), so encrypted zips
-# stay within the no-C-toolchain rule.
-zip = { version = "2", default-features = false, features = ["deflate", "aes-crypto"] }
-# 7z, pure Rust. Metadata can be read without decompressing, which keeps listing
-# cheap; AES-256 decryption comes from the same pure-Rust `aes` crate.
-sevenz-rust = { version = "0.6", features = ["aes256"] }
-# Restore each extracted file's modified time (std can't set it).
-filetime = "0.2"
-# tar + the compressors that wrap it. Every decoder here is pure Rust (flate2 on
-# its miniz_oxide backend), so no C toolchain is needed on any platform. These are
-# decode-only crates, which is all a read-only browser needs.
-tar = "0.4"
-flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
-# SFTP, spoken over the SYSTEM ssh binary (`ssh -s host sftp`) rather than an
-# in-process SSH stack: OpenSSH keeps ownership of auth, known_hosts,
-# ~/.ssh/config and ProxyJump, and we only implement the file protocol. Pure
-# Rust, no default features (the optional `openssh` feature pulls in connection
-# multiplexing, which Win32-OpenSSH doesn't support — we spawn ssh ourselves).
-openssh-sftp-client = { version = "0.15", default-features = false }
-tokio = { version = "1", features = ["process", "io-util", "sync", "time", "fs"] }
-futures-util = { version = "0.3", default-features = false }
-# The buffer type openssh-sftp-client's File::read takes/returns.
-bytes = "1"
-bzip2-rs = "0.1"
-ruzstd = "0.7"
-lzma-rs = "0.3"
 
-# Owner name resolution (uid -> username) on Unix.
-[target.'cfg(unix)'.dependencies]
-uzers = "0.12"
-
-# System file icons come from the platform's icon registry (NSWorkspace on macOS).
+# The Web Inspector is reached through WKWebView's private _inspector (actions.rs).
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = [
-    "NSString",
-    "NSData",
-    "NSDictionary",
-    "NSGeometry",
-    "NSURL",
-] }
-objc2-app-kit = { version = "0.3", features = [
-    "NSWorkspace",
-    "NSImage",
-    "NSImageRep",
-    "NSBitmapImageRep",
-    "NSGraphics",
-] }
-# SMB: NetFSMountURLSync (NetFS.framework) takes CoreFoundation types, so a
-# share mounts through the same system path Finder's "Connect to Server" uses —
-# no C to compile, and the Keychain answers for servers already connected to.
-objc2-core-foundation = { version = "0.3", features = [
-    "CFArray",
-    "CFDictionary",
-    "CFString",
-    "CFURL",
-] }
-# SMB: getmntinfo, to read back where the system actually mounted a share
-# (never guessed — a name collision turns /Volumes/x into /Volumes/x-1), plus
-# the errno constants NetFS reports failures with.
-libc = "0.2"
-image = { version = "0.25", default-features = false, features = ["png"] }
-
-# Windows: drive enumeration (Alt+F1/F2 picker) + Shell thumbnails (file preview).
-[target.'cfg(windows)'.dependencies]
-image = { version = "0.25", default-features = false, features = ["png"] }
-windows = { version = "0.58", features = [
-    "Win32_Foundation",
-    "Win32_Storage_FileSystem",
-    "Win32_System_Com",
-    "Win32_UI_Shell",
-    "Win32_Graphics_Gdi",
-    # SMB: NetShareEnum (smb://host share listing) + WNetAddConnection2W (sign-in).
-    "Win32_NetworkManagement_NetManagement",
-    "Win32_NetworkManagement_WNet",
-] }
 
 [dev-dependencies]
-# Async test harness for the live-host SFTP tests (all #[ignore]d).
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
-[profile.release]
-strip = true
