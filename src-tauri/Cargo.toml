@@ -1,6 +1,6 @@
 [package]
 name = "delight"
-version = "0.2.0"
+version = "0.3.0"
 description = "Delight Commander — a dual-pane file manager"
 authors = ["Marton Trencseni"]
 edition = "2021"

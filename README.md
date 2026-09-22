@@ -67,6 +67,22 @@ look-alike).
 - The globe button in the path bar builds either address for you, with a live
   preview and your recent servers.
 
+**From a browser**
+- **`delight-server`** puts the same interface in front of a machine you aren't
+  sitting at: run it on the box, open it in Chrome, and both panes show *that*
+  machine's filesystem. Copy, move, rename and delete work over there as they do
+  here; **⌘⇧U** uploads into the current folder and **⌘⇧S** downloads the
+  selection, which is the one axis the desktop app doesn't have.
+- **It's a server, so it's fenced like one.** Every path from the browser goes
+  through a single check that resolves symlinks *before* testing them against
+  the allowed roots; roots default to the home directory of the user running it,
+  never `/`; and `DELIGHT_READ_ONLY=1` refuses every mutating request. Access is
+  a shared token traded once for a signed, HttpOnly cookie — rotate the token and
+  every browser is logged out.
+- It's built from source, not shipped in the downloads above, and it needs no
+  webview — the desktop binary and the server are separate crates over one
+  shared core.
+
 **Making it yours**
 - **Every** shortcut is rebindable in a Shortcuts tab; **⌘K** draws a keyboard
   of the current bindings, and holding a modifier switches layers.
@@ -112,12 +128,14 @@ and **⌘K** shows them on a drawn keyboard. Defaults (on Windows, read every
 | ⌘⇧. | Show / hide hidden files |
 | ⌘K | Keyboard map |
 | ⌥⌘I | Developer tools (when enabled) |
+| **⌘⇧U / ⌘⇧S** | Upload here / download the selection _(browser only)_ |
 
 ## Platform support
 
 **macOS and Windows** both build and run. Previews and thumbnails work on both
 (Windows via the Shell's image factory), drives are reachable with the Alt+F1/F2
-picker, and ⌘ shortcuts map to Ctrl. The few macOS-only niceties — the
+picker, and ⌘ shortcuts map to Ctrl. The server build is headless — no webview,
+so it runs on a Linux box that has no desktop at all. The few macOS-only niceties — the
 standalone Quick Look panel, system file icons in list and grid, the global menu
 bar — degrade gracefully to the vector icons and the in-pane preview; the app
 looks and behaves the same otherwise. Linux is not yet built, but the code is
@@ -137,6 +155,18 @@ pnpm tauri build    # a distributable app bundle
 ./node_modules/.bin/tsc            # typecheck
 cd src-tauri && cargo check && cargo test
 ```
+
+To run the browser version, build the frontend and start the server — it serves
+the same bundle it talks to:
+
+```sh
+pnpm build
+cd server && DELIGHT_TOKEN=<a long random string> cargo run --release
+```
+
+It listens on `127.0.0.1:8787` by default. `DELIGHT_ROOTS` limits what it will
+serve (default: the home directory of the user running it) and
+`DELIGHT_READ_ONLY=1` makes it refuse every mutating request.
 
 The code preview reuses [Buffers](https://github.com/mtrencseni/buffers)' editor
 verbatim, so **both repos must be checked out side by side** — `src/langs.ts` and

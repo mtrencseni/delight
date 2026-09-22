@@ -189,6 +189,26 @@ On Windows, Alt+F1 / Alt+F2 open a drive picker for the left and right pane;
 typing a drive letter selects it directly. Backspace goes up; the editable
 path bar goes anywhere.
 
+### From a browser
+
+Delight also runs as a server. `delight-server` is the same frontend served
+over HTTP, with the panes showing the filesystem of the machine running it —
+so a NAS, a build box or a desktop you've walked away from is reachable from
+Chrome without a VNC session or a shell. Every file operation works there; the
+one thing the desktop app has no equivalent of is the third axis, uploading
+into the current folder and downloading the selection.
+
+The trade this makes is deliberate and narrow: the desktop app browses the
+filesystem of whoever is at the keyboard, and answers to the OS's own
+permission prompts. A server answers to a hostname, so it carries its own
+boundary instead — a fixed set of roots that defaults to the home directory of
+the user running it, never `/`; symlinks resolved before that boundary is
+tested rather than after; and a read-only mode that refuses every mutating
+request. Access is a shared token you set, traded once for a signed cookie.
+
+It is not a hosted product and has no accounts. It's the same app, pointed at
+a machine that isn't this one.
+
 ### Making it yours
 
 Every shortcut in the app is rebindable in a Shortcuts tab — recording a combo
@@ -222,7 +242,9 @@ macOS and Windows are supported and equivalent in day-to-day use. A few
 extras exist only where the OS provides them — the standalone Quick Look
 panel and system file icons on macOS — and degrade to the built-in preview
 and vector icons elsewhere, without layout changes. Linux is prepared for in
-the code but not yet built or supported.
+the code but not yet built or supported as a desktop app — though the server
+build is headless and has no such dependency, so a Linux box can run the
+browser version today.
 
 ## What Delight is not
 
@@ -239,6 +261,10 @@ the code but not yet built or supported.
   purpose; editing belongs to Buffers or your editor of choice.
 - **Not a native-look app.** It will never adopt Finder's or Explorer's
   visual language. One design, everywhere.
+- **Not a hosted service.** The server build (see "From a browser") is
+  something you run on your own machine for your own use, with one shared
+  token and no accounts. It is not multi-tenant, has no user model, and is not
+  designed to be exposed to the open internet.
 
 ## Trust
 
@@ -247,3 +273,13 @@ are its own settings files. Every filesystem mutation goes through one guarded
 path with confirmation on by default, delete is Trash-only, and drag-out is
 copy-only. On macOS, folder-access permission prompts are the OS's own,
 appearing once per protected folder as for any app.
+
+The server build changes what "trust" has to mean, because the thing on the
+other side of the boundary stops being the person at the keyboard. So it gets
+a boundary of its own rather than inheriting the desktop's: one function turns
+a path from the browser into a path the process will touch, and it resolves
+symlinks *before* checking them against the allowed roots — a link that points
+out of a root is not a door through it — never resolves `..` by string surgery,
+and splits an archive marker off before checking the real half. Roots default
+to one home directory. `DELIGHT_READ_ONLY=1` turns the whole thing into a
+viewer. None of this is optional or configurable away.

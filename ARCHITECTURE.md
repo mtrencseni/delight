@@ -14,6 +14,21 @@ interface from a vanilla TypeScript + Vite frontend. The two sides talk over
 Tauri's IPC — the frontend calls `invoke("list_dir", …)` and gets JSON back;
 the backend pushes events (progress, menu actions) the other way.
 
+The Rust is **three crates in one workspace**, and the split is load-bearing
+rather than tidiness. `core/` (`delight-core`) holds every module that does
+filesystem work, with the Tauri coupling replaced by two things a host has to
+supply: an `Env` (the well-known directories, which the OS answers better than
+`$HOME` does) and an `Emitter` for progress. `src-tauri/` is a window plus thin
+command wrappers over that core. `server/` is an axum HTTP host over the same
+core — the web port. The reason they're separate crates and not features of one
+is that **Tauri drags in GTK/WebKitGTK on Linux**, and a headless box serving
+files has no business building a webview.
+
+The frontend is one build with two hosts. `src/target.ts` decides which it's
+talking to and `src/ipc.ts` routes `invoke` accordingly: Tauri IPC in the app,
+`fetch` to `/api/…` in the browser, and the in-memory mock under plain
+`pnpm dev`. Feature code calls `invoke` and doesn't know the difference.
+
 The boundary is strict and worth internalizing: **the webview never touches
 the disk.** Every read goes through a `#[tauri::command]`; every write goes
 through exactly one Rust module (`ops.rs`). This gives one place to audit for
@@ -111,6 +126,34 @@ which just flips the flag via a `cancel_op` command; the operation polls it at
 file boundaries and reports `cancelled` in its result. A guard struct removes
 the registry entry on drop, so no path — success, error, or cancellation —
 leaks a flag.
+
+### The server (web port)
+
+`server/` serves the built frontend and exposes the same commands over HTTP, so
+the panes show the *server's* filesystem. Two things differ from the desktop,
+and both follow from the boundary moving.
+
+**`jail.rs` is the single place a path from the browser becomes a path this
+process will touch**, and its ordering is the whole point. Symlinks are
+resolved **before** the roots check, because a link pointing out of a root
+would otherwise be a door through it. `..` is never resolved lexically — a path
+containing it must canonicalize in full, since string surgery applied before
+symlink resolution is precisely how these checks are normally defeated. And the
+archive marker (`!`) is split off first, with only the real half checked. Roots
+default to the home of the user running the server, never `/`; `DELIGHT_READ_ONLY`
+refuses every mutating command.
+
+Auth is the arrangement Buffers uses: a shared token, traded once at `/login`
+for a signed HttpOnly cookie whose key derives from that token — so rotating the
+token logs every browser out, with no session store to expire.
+
+Upload and download are the one axis the desktop app doesn't have (there, the
+files are already on this machine). Downloads stream: `zip` 2.x seeks back to
+patch each local header, so a streaming writer was never possible — the archive
+is built into a temp file, unlinked, and streamed from the still-open handle.
+Preview needed almost nothing, since the editor was already Buffers' and PDFs
+already had a viewer; both point at `/api/file`, which honours `Range`, so a
+400-page document opens without being fetched whole.
 
 ### The archive subsystem
 
@@ -219,8 +262,9 @@ usually, a human.
 
 ## Build and release
 
-`pnpm tauri build` produces `Delight.app` on macOS (self-signed, so the TCC
-permission grants survive rebuilds) and a standalone `delight.exe` plus an
+`pnpm tauri build` produces `Delight.app` on macOS (self-signed — which keeps
+TCC permission grants across rebuilds, and equally means Gatekeeper on *another*
+Mac will refuse it until the quarantine attribute is cleared) and a standalone `delight.exe` plus an
 NSIS installer on Windows. GitHub Actions builds Windows releases on version
 tags: it checks out both repos (the editor linkage above), installs both
 dependency trees, builds, and attaches versioned and stable-named binaries

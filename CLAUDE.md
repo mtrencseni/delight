@@ -56,10 +56,18 @@ not built in CI — attach it from a Mac. Do these in order:
      feature contradicts an old promise (v0.2's SMB/SFTP did exactly that).
    - `ARCHITECTURE.md` — new subsystems and their seams.
    - This file — the cross-platform status table.
-2. **Bump the version in all four places**, or the workflow fails the build:
-   `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and
-   `Cargo.lock` (a `cargo check` refreshes it). The tag must match
-   `tauri.conf.json` exactly — three-part semver, `v0.2.0` not `v0.2`.
+   A whole feature can land with none of these touched: the v0.3 web port
+   shipped `server/`, a crate split, a security jail and two new commands
+   without a single markdown file changing. Diff the docs against the log
+   (`git diff --name-only vPREV..main -- '*.md'`) before trusting them.
+2. **Bump the version in all SIX places**, or the workflow fails the build:
+   `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`,
+   `core/Cargo.toml`, `server/Cargo.toml`, and `Cargo.lock` (a `cargo check`
+   refreshes it — and note the lock now lives at the repo ROOT, not in
+   `src-tauri/`, since the Rust became a three-crate workspace). The tag must
+   match `tauri.conf.json` exactly — three-part semver, `v0.2.0` not `v0.2`.
+   Check with:
+   `grep -rn '^version' Cargo.lock core/Cargo.toml server/Cargo.toml src-tauri/Cargo.toml | head`
 3. `git tag -a vX.Y.Z && git push origin vX.Y.Z`, then watch
    `gh run list --repo mtrencseni/delight`.
 4. **Build and attach macOS** once CI is green:
@@ -137,7 +145,28 @@ browser. `isTauri` gates native-only calls.
 | `theme.ts`, `toast.ts`, `ipc.ts`, `mock.ts` | Theme apply/observe; transient toasts; IPC wrapper + `isTauri`; browser mock. |
 | `styles.css` | All styling. CSS custom-property theme tokens; grid-based list columns via `--grid-cols`. |
 
-### Backend (`src-tauri/src/`)
+### Backend — three crates (`core/`, `src-tauri/`, `server/`)
+
+The Rust is a **workspace**, not one crate, and the file table below lives in
+`core/src/` unless noted. `core/` (`delight-core`) owns every module that does
+filesystem work; it has no Tauri dependency, and takes what it needs from a host
+through two traits — `Env` (well-known directories; the OS answers these better
+than `$HOME` does) and `Emitter` (progress). `src-tauri/` is a window plus thin
+`#[tauri::command]` wrappers. `server/` is an axum host over the same core.
+
+**Why split rather than feature-gate:** Tauri pulls in GTK/WebKitGTK on Linux,
+and a headless file server must not build a webview. Anything you add that both
+hosts need goes in `core/`; anything that needs a window goes in `src-tauri/`.
+
+`server/src/jail.rs` is the one place a browser-supplied path becomes a path the
+process will touch, and the ORDER of its checks is the security property — see
+ARCHITECTURE.md. Don't refactor it for elegance; symlinks must resolve before
+the roots test, `..` must never be resolved lexically, and the archive marker is
+split off before either.
+
+Run it with `pnpm build` then
+`cd server && DELIGHT_TOKEN=… cargo run --release` (`DELIGHT_ROOTS`,
+`DELIGHT_READ_ONLY=1`, listens on 127.0.0.1:8787).
 
 | File | Commands / role |
 | --- | --- |

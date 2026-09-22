@@ -1,6 +1,6 @@
 [package]
 name = "delight-server"
-version = "0.2.0"
+version = "0.3.0"
 description = "Delight Commander — the HTTP backend behind the web UI"
 authors = ["Marton Trencseni"]
 edition = "2021"

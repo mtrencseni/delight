@@ -1,6 +1,6 @@
 [package]
 name = "delight-core"
-version = "0.2.0"
+version = "0.3.0"
 description = "Delight Commander — filesystem core, shared by the desktop app and the server"
 authors = ["Marton Trencseni"]
 edition = "2021"
