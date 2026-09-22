@@ -102,7 +102,17 @@ jobs:
         id: art
         shell: bash
         run: |
-          src="delight/src-tauri/target/x86_64-pc-windows-msvc/release/delight.exe"
+          # Workspace root, NOT src-tauri/target: the Rust became a three-crate
+          # workspace (core / server / src-tauri) in 0.3, and cargo puts the
+          # shared target dir beside the workspace Cargo.toml. The build step
+          # above succeeds either way, so getting this wrong fails here, after
+          # the slowest part of the job has already run.
+          src="delight/target/x86_64-pc-windows-msvc/release/delight.exe"
+          if [[ ! -f "$src" ]]; then
+            echo "::error::No exe at $src — did the target dir move again?"
+            find delight -name delight.exe -path '*release*' | head
+            exit 1
+          fi
           name="Delight-${{ steps.v.outputs.version }}-win_x64-portable.exe"
           # A second, version-less copy. Release assets are addressable at
           # /releases/latest/download/<file>, which only works if the file name
