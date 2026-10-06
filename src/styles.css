@@ -108,6 +108,12 @@
   box-sizing: border-box;
 }
 
+/* Settings → "System font": the OS's UI face (GTK's font on Linux, Segoe on
+   Windows, SF on macOS) instead of the bundled Inter. */
+:root.sysfont {
+  --font: system-ui, sans-serif;
+}
+
 html {
   font-size: 16px; /* zoom target: main.ts scales this */
 }

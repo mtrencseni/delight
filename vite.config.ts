@@ -46,7 +46,10 @@ export default defineConfig(({ mode }) => {
     // gets its own so both can run at once.
     port: web ? 1421 : 1420,
     strictPort: true,
-    watch: { ignored: ["**/src-tauri/**"] },
+    // Cargo builds under target/ at the workspace root (src-tauri/target is the
+    // pre-0.3 location); its registry cache alone has more files than the
+    // default inotify budget.
+    watch: { ignored: ["**/src-tauri/**", "**/target/**"] },
     // The symlinked editor-core.ts / langs.ts realpath is outside Delight's root,
     // so the dev server must be allowed to serve from there.
     fs: { allow: [".", "../Buffers"] },

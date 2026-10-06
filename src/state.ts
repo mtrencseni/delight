@@ -51,6 +51,7 @@ export const state = {
     folderChips: true,
     launchApps: true,
     previewIcons: false,
+    systemFont: false,
     highlightToday: true,
     splitRatio: SPLIT_DEFAULT,
     sidebarWidth: SIDEBAR_DEFAULT,

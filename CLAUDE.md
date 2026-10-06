@@ -18,7 +18,8 @@ standalone panel, list/grid system icons) degrade gracefully to the vector icons
 
 **Design principle — "delight":** snappy, keyboard-first, no jank, subtle
 ~120ms animations, its own single design on all platforms (NOT native
-emulation). All icons are inline SVG; bundled Inter font; everything scales via
+emulation). All icons are inline SVG; bundled Inter font (Settings → "System
+font" swaps in the OS face via `:root.sysfont`); everything scales via
 root `rem` so zoom Just Works. If a feature can't feel good, cut it.
 
 ## Stack & commands
