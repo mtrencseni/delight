@@ -6,7 +6,7 @@ original intent. User-facing overview is in [README.md](README.md).
 ## What this is
 
 **Delight Commander** ("Delight") — a Total Commander–style dual-pane file
-manager. **macOS + Windows** (Linux still fill-in-the-blanks). It was read-only
+manager. **macOS + Windows + Linux**. It was read-only
 through v0.1; **v0.2 adds file operations** (copy / move / rename / new folder /
 move-to-Trash — see `ops.rs`), each guarded and confirmed by default. Everything
 else is still read-only. The Windows port keeps the "own design, not native
@@ -18,12 +18,13 @@ standalone panel, list/grid system icons) degrade gracefully to the vector icons
 
 **Design principle — "delight":** snappy, keyboard-first, no jank, subtle
 ~120ms animations, its own single design on all platforms (NOT native
-emulation). All icons are inline SVG; bundled Inter font; everything scales via
+emulation). All icons are inline SVG; bundled Inter font (Settings → "System
+font" swaps in the OS face via `:root.sysfont`); everything scales via
 root `rem` so zoom Just Works. If a feature can't feel good, cut it.
 
 ## Stack & commands
 
-- **Tauri 2** (Rust backend + WKWebView on macOS / WebView2 on Windows) +
+- **Tauri 2** (Rust backend + WKWebView on macOS / WebView2 on Windows / WebKitGTK on Linux) +
   **vanilla TypeScript / Vite** + **pnpm**.
 - All filesystem access is via Rust `#[tauri::command]`s; the webview never
   touches the disk. Commands are async and must not block the UI.
@@ -34,6 +35,11 @@ pnpm tauri dev            # native app + HMR
 pnpm dev                  # browser-only against src/mock.ts (no native shell)
 pnpm tauri build          # macOS → …/bundle/macos/Delight.app + …/bundle/dmg/*.dmg
                           # Windows → …/release/delight.exe (releases ship this, --no-bundle)
+                          # Linux → …/bundle/deb/*.deb + …/bundle/appimage/*.AppImage
+                          #   (needs Tauri's GTK/WebKitGTK dev packages: libwebkit2gtk-4.1-dev
+                          #    librsvg2-dev libxdo-dev libayatana-appindicator3-dev libssl-dev)
+scripts/linux-build.sh    # the same Linux build inside an ubuntu-22.04 container (docker),
+                          # for a host without those dev packages → target/linux-docker/
 ./node_modules/.bin/tsc   # typecheck (also: pnpm build runs prebuild + tsc + vite build)
 cd src-tauri && cargo check
 ```
@@ -41,8 +47,8 @@ cd src-tauri && cargo check
 ## Cutting a release
 
 Pushing a `v*` tag is the whole trigger: `.github/workflows/release.yml` builds
-the Windows x64 portable exe on a runner and opens a **draft** release. macOS is
-not built in CI — attach it from a Mac. Do these in order:
+the Windows x64 portable exe and the Linux x64 .deb + AppImage on runners and
+opens a **draft** release. macOS is not built in CI — attach it from a Mac. Do these in order:
 
 1. **Update the docs to match what shipped.** Every release, before tagging:
    - `README.md` — the Features section and the shortcut table. This is the file
@@ -103,9 +109,10 @@ behavior, put it in the matching seam — never fork a shared file with an `if`:
 | --- | --- |
 | `src/platform.ts` | The single frontend OS branch: `isMac`, `MOD` (`Meta` on macOS, `Ctrl` elsewhere). Everything else imports these — no other file sniffs the platform. |
 | `.mac` root class | Set in `main.ts` alongside `.native` only on macOS. CSS gates mac-only chrome (the traffic-light title-bar inset) to `:root.native.mac`; Windows keeps standard window chrome. |
-| Rust `#[cfg(target_os = …)]` | Native capability splits: `menu.rs` (real menu on macOS, no-op stub elsewhere), plus the pre-existing icon/thumbnail/quicklook/default_app stubs. `to_data_uri` + its `base64` use are macOS-gated. |
-| `tauri.<os>.conf.json` | Per-OS Tauri config merged over the base (**arrays replace wholesale** — the macOS window entry is restated in full to add `Overlay`/`hiddenTitle`). macOS: `app` target + signing. Windows: `nsis` target. Base stays platform-neutral. |
+| Rust `#[cfg(target_os = …)]` | Native capability splits: `menu.rs` (real menu on macOS, no-op stub elsewhere), plus the pre-existing icon/thumbnail/quicklook/default_app stubs. `roots.rs` has one `native_roots` per OS; `details.rs` one `thumbnail` per OS. |
+| `tauri.<os>.conf.json` | Per-OS Tauri config merged over the base (**arrays replace wholesale** — the macOS window entry is restated in full to add `Overlay`/`hiddenTitle`). macOS: `app` target + signing. Windows: `nsis` target. Linux: `deb` + `appimage` targets. Base stays platform-neutral. |
 | `scripts/prebuild.mjs` | The build-time shell that was macOS-only (keychain unlock). Runs only when `platform() === "darwin"`; the Tauri config just calls `pnpm build`. |
+| `scripts/linux-build.{Dockerfile,sh}` | The Linux toolchain as a container, mirroring the CI job (same ubuntu-22.04 base, same apt list). Caches go under `target/linux-docker/`; node_modules get anonymous volumes so the host's never mix with the container's glibc. |
 
 Shortcut **labels** follow `MOD` too: `comboLabel` renders `⌘⇧.` on macOS and
 `Ctrl+Shift+.` on Windows; button tooltips use `state.hint(id)` so they read
@@ -176,7 +183,7 @@ Run it with `pnpm build` then
 | `icons.rs` | `file_icon` — system icon as PNG data URI (NSWorkspace). |
 | `actions.rs` | `open_path` (default app), `quicklook`/`quicklook_close` (in-process `QLPreviewPanel`), `toggle_devtools`/`close_devtools` (WKWebView inspector). |
 | `ops.rs` | **The only mutating commands:** `copy_entries`/`move_entries` (recursive; overwrite flag; refuse into-itself; same-folder copy auto-dedups "… copy"), `rename_entry`, `create_folder`, `trash_entries` (via the `trash` crate — never a hard unlink). Driven from `main.ts`'s `doTransfer`/`doRename`/`doNewFolder`/`doTrash` with a `dialog.ts` confirm/prompt (Norton/Total-Commander F-keys F5/F6/⇧F6/F7/F8 on Windows/Linux, number keys 5/6/⇧6/7/8 on macOS — the per-OS split lives in `commands.ts`; confirm gated by `settings.confirmOps`). |
-| `roots.rs` | `fs_roots` (filesystem roots abstraction), `dropbox_dir` (reads `~/.dropbox/info.json`). |
+| `roots.rs` | `fs_roots` (filesystem roots for the drive picker: `/` on macOS, drive letters on Windows, `/` + `/media`, `/run/media`, `/mnt` mounts from `/proc/mounts` on Linux), `dropbox_dir` (reads `~/.dropbox/info.json`). |
 | `settings.rs` | `load_state`/`save_state` — one JSON file in `app_config_dir`, atomic write. |
 | `sftp.rs` | SFTP over the **system ssh binary**: `ssh -s user@host sftp` starts the remote sftp subsystem and we speak the protocol over the child's stdin/stdout (`openssh-sftp-client`). SFTP always runs inside an SSH channel, so this is the same protocol any client speaks — OpenSSH just owns the SSH layer, which buys `~/.ssh/config`, agent keys, `known_hosts` and ProxyJump for free and keeps host-key verification out of our hands. UI form: `sftp://[user@]host[:port]/abs/path`; `ssh://` is an alias, canonicalized to `sftp://`. One pooled ssh process per authority (`kill_on_drop`, so nothing is orphaned); every entry point goes through `redial!`, which drops a dead session and retries once (a pooled session dies on server restart/sleep — the crate reports it as "background task failed", so that string counts as a disconnect). v1 is **read-only + copy-out**: `plan` walks the tree using the attributes READDIR already returned (statting each entry separately made a walk of /etc take 77 s) and records unreadable items and symlinks as **skips instead of aborting** — one locked-down subdirectory must not cost the user the other 500 files. `download` streams in 64 KB chunks and checks cancellation between them. Auth runs with `BatchMode=yes`: a GUI has no TTY, so a prompt would hang; failures come back as ssh's own stderr with a hint appended (an `SSH_ASKPASS` helper is the planned follow-up). Windows spawns get `CREATE_NO_WINDOW` or a console flashes. |
 | `smb.rs` | SMB via the OS, no protocol client. The UI speaks `smb://[user@]host/share/…` everywhere (portable — a favorite saved on Windows works on the Mac); `localize()` translates at every command entry (ops/details/actions call it too), `delocalize()` rewrites listing paths back so the UI never sees a native path. `localize_checked()` is the one variant allowed side effects and failure — navigation calls it, everything downstream calls the infallible `localize`. Listings answer the `__smb_auth_required` sentinel → frontend sign-in dialog → retry. Inline `smb://user:pass@host` passwords are used once and never stored/shown. **Windows:** UNC (`\\host\share`), shares via `NetShareEnum`, `smb_login` = `WNetAddConnection2W` to `\\host\IPC$` (fails on wrong creds — nothing broken cached); the separator flip stops at the archive `!` boundary, so archives inside shares compose. **macOS:** a share is a *volume*, so `localize_checked` mounts it via `NetFSMountURLSync` (NetFS.framework — the call behind Finder's Connect to Server, so the Keychain answers for servers already used, and a password is passed as an argument, never in argv). Mount on first access, never unmounted, and the mount point is always read back — from NetFS, else `getmntinfo` — because a name collision silently turns `/Volumes/x` into `/Volumes/x-1`. Shares come from `smbutil view -N`, which does **not** mount, so opening a server is side-effect-free; `$`-shares are hidden on both platforms. See "SMB on macOS" below for what only a live server can tell you. |
@@ -310,44 +317,40 @@ DELIGHT_SMB_PROBE_HOST=server       cargo test refusals -- --ignored --nocapture
 DELIGHT_SFTP_TEST=sftp://user@host  cargo test sftp -- --ignored --nocapture
 ```
 
-## Cross-platform status (Mac ✅ / Win ✅ / Linux)
+## Cross-platform status (Mac ✅ / Win ✅ / Linux ✅)
 
-macOS and Windows both build and run. The backend is fenced (`#[cfg]`, `PathBuf`,
+All three build and run. The backend is fenced (`#[cfg]`, `PathBuf`,
 no hardcoded separators; `open_path` handles `open`/`cmd start`/`xdg-open`;
-`build.rs` only compiles `quicklook.m` on macOS; icons/quicklook/devtools/menu
-have non-macOS stubs). On Windows the OS-only features degrade gracefully rather
-than erroring. Linux is untried but should mostly follow. Remaining Windows items
-are polish, not blockers:
+`build.rs` only compiles `quicklook.m` on macOS; icons/quicklook/menu have
+non-macOS stubs). Off macOS the OS-only features degrade gracefully rather than
+erroring. Remaining items are polish, not blockers:
 
 | Area | macOS | Windows | Linux | Notes |
 | --- | --- | --- | --- | --- |
-| Directory listing, nav, sort, columns (global spec), tabs, selection (incl. icon marquee + auto-scroll), favorites, size bars, themes, zoom, window-state | ✅ | ✅ | should work | Pure-Rust `std::fs` + portable frontend. |
-| Keyboard shortcuts | ✅ ⌘ | ✅ Ctrl | should work | `MOD` in `src/platform.ts` is `Meta` on macOS, `Ctrl` elsewhere; `commands.ts` defaults + labels + `keyboard.ts` `NATIVE_EDIT` are built from it (`Ctrl+Y` redo added for Windows). Rebindable in the Shortcuts tab. |
+| Directory listing, nav, sort, columns (global spec), tabs, selection (incl. icon marquee + auto-scroll), favorites, size bars, themes, zoom, window-state | ✅ | ✅ | ✅ | Pure-Rust `std::fs` + portable frontend. |
+| Keyboard shortcuts | ✅ ⌘ | ✅ Ctrl | ✅ Ctrl | `MOD` in `src/platform.ts` is `Meta` on macOS, `Ctrl` elsewhere; `commands.ts` defaults + labels + `keyboard.ts` `NATIVE_EDIT` are built from it (`Ctrl+Y` redo added for Windows). Rebindable in the Shortcuts tab. |
 | Native menu (`menu.rs`) | ✅ global menu bar | ✅ dropped | dropped | A Win/Linux menu bar paints in un-themable system colors *inside* the window and clashes with the tab-bar titlebar, so `install` is a macOS-only real menu / no-op elsewhere. The webview keeps every shortcut. |
 | Integrated titlebar | ✅ traffic-light inset (`Overlay`, `:root.native.mac`) | ✅ standard chrome | standard chrome | `Overlay`/`hiddenTitle` live in `tauri.macos.conf.json`; off macOS the base config's standard window is used and the `.mac`-gated CSS inset doesn't apply. |
-| Build / signing | ✅ `app` + self-signed | ✅ `nsis` installer + `delight.exe` | — | Per-OS `tauri.<os>.conf.json` targets; keychain unlock moved to `scripts/prebuild.mjs` (darwin-only). NSIS is unsigned → SmartScreen warns; bootstraps WebView2 on older Windows 10. |
+| Build / signing | ✅ `app` + self-signed | ✅ `nsis` installer + `delight.exe` | ✅ `deb` + `appimage`, unsigned | Per-OS `tauri.<os>.conf.json` targets; keychain unlock moved to `scripts/prebuild.mjs` (darwin-only). NSIS is unsigned → SmartScreen warns; bootstraps WebView2 on older Windows 10. CI builds Linux on ubuntu-22.04 so the AppImage's glibc floor stays low. |
 | `perm_string` (Permissions column) | ✅ rwx | ⚠️ returns `None` | ✅ rwx | Windows has no rwx; the column shows blank. Could show an ACL summary later. |
 | `created` time | ✅ | ✅ | ⚠️ | `metadata().created()` is unsupported on some Linux FS → `None`. |
-| Hidden-until-painted launch | ✅ | ✅ | should work | `visible: false` in the base + macOS window config; `lib.rs` `show_main_window` (invoked after a double-rAF at the end of main.ts init), window-state plugin excludes `VISIBLE`, 3s failsafe thread. Kills the white flash on both. |
+| Hidden-until-painted launch | ✅ | ✅ | ✅ | `visible: false` in the base + macOS window config; `lib.rs` `show_main_window` (invoked after a double-rAF at the end of main.ts init), window-state plugin excludes `VISIBLE`, 3s failsafe thread. Kills the white flash on both. |
 | Path display | ✅ | ✅ `C:\…` | ✅ | `dunce::canonicalize` (fs_cmds + ops) strips Windows' `\\?\` verbatim prefix so the path bar shows `C:\Users\…`, not `\\?\C:\Users\…`. No-op off Windows. |
 | Hidden files (`fs_cmds::is_hidden`) | ✅ dotfiles | ✅ dotfiles + `HIDDEN`/`SYSTEM` attr | ✅ dotfiles | "Show hidden" also folds Windows attribute-hidden entries (`$Recycle.Bin`, `System Volume Information`, `pagefile.sys`, `desktop.ini`, …), read from `MetadataExt::file_attributes()`. |
-| Preview thumbnails (`file_thumbnail`) | ✅ `qlmanage` | ✅ `IShellItemImageFactory` | ⚠️ none → plain icon | Powers the opposite-pane preview, chip preview, AND the **Preview icons** setting. Windows: COM `SHCreateItemFromParsingName` → `GetImage` → HBITMAP → PNG (`details.rs hbitmap_to_png`), on a spawn_blocking thread with per-call STA `CoInitializeEx`. Linux: thumbnailers / Gio (still None). |
+| Preview thumbnails (`file_thumbnail`) | ✅ `qlmanage` | ✅ `IShellItemImageFactory` | ⚠️ freedesktop thumbnail cache (read-only) | Powers the opposite-pane preview, chip preview, AND the **Preview icons** setting. Windows: COM `SHCreateItemFromParsingName` → `GetImage` → HBITMAP → PNG (`details.rs hbitmap_to_png`), on a spawn_blocking thread with per-call STA `CoInitializeEx`. Linux: reads `~/.cache/thumbnails/<size>/<md5 of file URI>.png` — whatever the desktop's file manager already rendered; nothing is rendered or written, so files no other app has shown have no thumbnail. Running the thumbnailers ourselves (or Gio) is the upgrade path. |
 | System file icons (`icons.rs`) | ✅ NSWorkspace | ⚠️ stub → vector | ⚠️ stub → vector | List/grid icons still fall back to the inline vector set (the *thumbnail* path above is separate). Win: `SHGetFileInfo`; Linux: icon-theme lookup. |
 | Quick Look window (Space fallback, `quicklook.m` + `actions.rs`) | ✅ | ⚠️ in-pane only | ⚠️ in-pane only | macOS-only panel; the in-pane code/image preview still works everywhere. |
 | "Opens with <app>" in chips (`default_app`) | ✅ | ⚠️ hidden | ⚠️ hidden | Win: `AssocQueryString`; Linux: `.desktop` / `xdg-mime`. |
 | `dropbox_dir` | ✅ `~/.dropbox/info.json` | ⚠️ | ✅ | Windows stores it at `%APPDATA%\Dropbox\info.json` — add that path. |
 | Drag-out (`tauri-plugin-drag`) | ✅ | ✅ | ✅ | Plugin is cross-platform; verify the OS drag lands. |
-| Filesystem roots + drive picker (`roots.rs`) | ✅ `/` (single) | ✅ `GetLogicalDrives` | ✅ `/` | Windows enumerates mounted drive letters; the **Alt+F1 / Alt+F2** picker (`pane.ts openDrives`, commands registered only off macOS) navigates the left/right pane to a drive root. |
-| SMB (`smb.rs` + `src/smb.ts`) | ✅ NetFS mount + `getmntinfo` mount-point resolution, `smbutil view` share listing | ✅ UNC translation, `NetShareEnum` share listing, `WNetAddConnection2W` sign-in | ⚠️ | `smb://…` is the canonical form on every OS; only the translation layer is per-platform. |
+| Filesystem roots + drive picker (`roots.rs`) | ✅ `/` (single) | ✅ `GetLogicalDrives` | ✅ `/` + mounted volumes | Windows enumerates mounted drive letters; Linux lists `/` plus mounts under `/media`, `/run/media` and `/mnt` from `/proc/mounts`. The **Alt+F1 / Alt+F2** picker (`pane.ts openDrives`, commands registered only off macOS) navigates the left/right pane to a root; the active entry is the longest-prefix match, since `/` prefixes everything. Per-drive memory is Windows-only (`driveLetter()` is null elsewhere). |
+| SMB (`smb.rs` + `src/smb.ts`) | ✅ NetFS mount + `getmntinfo` mount-point resolution, `smbutil view` share listing | ✅ UNC translation, `NetShareEnum` share listing, `WNetAddConnection2W` sign-in | ⚠️ `NOT_SUPPORTED` stub (gio mount is the natural route) | `smb://…` is the canonical form on every OS; only the translation layer is per-platform. |
 
-**Devtools** (`actions.rs`): macOS drives WKWebView's private `_inspector`. The
-non-macOS `toggle_devtools`/`close_devtools` are **no-op stubs** for now (the
-button does nothing on Windows), so the release build stays clean without pulling
-in wry's `devtools` feature. To wire it later, mirror Buffers'
-`is_devtools_open`/`open_devtools`/`close_devtools` path behind that feature.
+**Devtools** (`actions.rs`): macOS drives WKWebView's private `_inspector`;
+Linux uses Tauri's `open_devtools`/`close_devtools`/`is_devtools_open` (the
+`devtools` feature is on, so it works in release). Windows is still a **no-op
+stub** — wire it the same way as Linux.
 
-**Approach for the next platform (Linux):** build it, expect the fenced
-non-macOS stubs to return `None`/no-op (graceful), then work down the ⚠️ rows.
 Keep the "own design, not native emulation" rule — don't add platform look-alikes.
 
 ## Conventions

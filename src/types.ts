@@ -115,6 +115,8 @@ export interface Settings {
   launchApps: boolean;
   /** Render file content thumbnails (QuickLook) in list & icon views, like Finder. */
   previewIcons: boolean;
+  /** Render the UI in the OS's font instead of the bundled Inter. */
+  systemFont: boolean;
   /** Tint the modified time green for files changed today. */
   highlightToday: boolean;
   /** Share of the two-pane area given to the LEFT pane, 0..1. Drag the divider
