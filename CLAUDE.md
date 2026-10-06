@@ -37,6 +37,8 @@ pnpm tauri build          # macOS → …/bundle/macos/Delight.app + …/bundle/
                           # Linux → …/bundle/deb/*.deb + …/bundle/appimage/*.AppImage
                           #   (needs Tauri's GTK/WebKitGTK dev packages: libwebkit2gtk-4.1-dev
                           #    librsvg2-dev libxdo-dev libayatana-appindicator3-dev libssl-dev)
+scripts/linux-build.sh    # the same Linux build inside an ubuntu-22.04 container (docker),
+                          # for a host without those dev packages → target/linux-docker/
 ./node_modules/.bin/tsc   # typecheck (also: pnpm build runs prebuild + tsc + vite build)
 cd src-tauri && cargo check
 ```
@@ -109,6 +111,7 @@ behavior, put it in the matching seam — never fork a shared file with an `if`:
 | Rust `#[cfg(target_os = …)]` | Native capability splits: `menu.rs` (real menu on macOS, no-op stub elsewhere), plus the pre-existing icon/thumbnail/quicklook/default_app stubs. `roots.rs` has one `native_roots` per OS; `details.rs` one `thumbnail` per OS. |
 | `tauri.<os>.conf.json` | Per-OS Tauri config merged over the base (**arrays replace wholesale** — the macOS window entry is restated in full to add `Overlay`/`hiddenTitle`). macOS: `app` target + signing. Windows: `nsis` target. Linux: `deb` + `appimage` targets. Base stays platform-neutral. |
 | `scripts/prebuild.mjs` | The build-time shell that was macOS-only (keychain unlock). Runs only when `platform() === "darwin"`; the Tauri config just calls `pnpm build`. |
+| `scripts/linux-build.{Dockerfile,sh}` | The Linux toolchain as a container, mirroring the CI job (same ubuntu-22.04 base, same apt list). Caches go under `target/linux-docker/`; node_modules get anonymous volumes so the host's never mix with the container's glibc. |
 
 Shortcut **labels** follow `MOD` too: `comboLabel` renders `⌘⇧.` on macOS and
 `Ctrl+Shift+.` on Windows; button tooltips use `state.hint(id)` so they read

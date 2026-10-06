@@ -175,6 +175,9 @@ The code preview reuses [Buffers](https://github.com/mtrencseni/buffers)' editor
 verbatim, so **both repos must be checked out side by side** — `src/langs.ts` and
 `src/editor-core.ts` re-export from `../../Buffers/src/`.
 
+On Linux, `scripts/linux-build.sh` runs the same build in a Docker container, so
+the GTK/WebKitGTK dev packages never need installing on the host.
+
 Releases are cut by pushing a `v*` tag: CI builds and publishes the Windows and
 Linux binaries, and the macOS build is attached from a Mac. See [CLAUDE.md](CLAUDE.md).
 
