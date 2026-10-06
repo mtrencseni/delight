@@ -244,6 +244,10 @@ export const MODIFIER_CODES = new Set([
 ]);
 
 /** Encode a keydown as a canonical combo string, or null for a lone modifier. */
+// Named (non-printable) keys whose `key` value is spelled like a `code`, so one
+// can stand in for the other.
+const NAMED_KEY = /^(Arrow(Up|Down|Left|Right)|F\d{1,2}|Insert|Delete|Home|End|PageUp|PageDown|Backspace|Enter|Escape|Tab)$/;
+
 export function comboFromEvent(e: KeyboardEvent): string | null {
   if (!e.code || MODIFIER_CODES.has(e.code)) return null;
   const parts: string[] = [];
@@ -251,7 +255,12 @@ export function comboFromEvent(e: KeyboardEvent): string | null {
   if (e.ctrlKey) parts.push("Ctrl");
   if (e.altKey) parts.push("Alt");
   if (e.shiftKey) parts.push("Shift");
-  parts.push(e.code);
+  // Physical key by default (layout-independent for letters), but a named key
+  // the OS produced wins over the key cap it came from: a laptop's Fn+Backspace
+  // that the keyboard driver turns into Insert arrives as key "Insert" with
+  // code "Backspace", and must not go up a folder. Same for a NumLock-off
+  // numpad arrow (code "Numpad8", key "ArrowUp").
+  parts.push(NAMED_KEY.test(e.key) ? e.key : e.code);
   return parts.join("+");
 }
 
