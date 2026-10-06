@@ -251,21 +251,35 @@ fn inspector(app: &tauri::AppHandle, action: i32) {
     });
 }
 
+/// Linux: WebKitGTK's inspector through Tauri's own API (the `devtools` feature
+/// keeps it in release builds). Same action codes as the macOS one: 0 toggles,
+/// 1 closes. Windows stays a no-op — see CLAUDE.md.
+#[cfg(target_os = "linux")]
+fn inspector(app: &tauri::AppHandle, action: i32) {
+    use tauri::Manager;
+    let Some(w) = app.get_webview_window("main") else { return };
+    if action == 0 && !w.is_devtools_open() {
+        w.open_devtools();
+    } else {
+        w.close_devtools();
+    }
+}
+
 /// Toggle the Web Inspector. The frontend gates this behind a setting.
 #[tauri::command]
 pub fn toggle_devtools(app: tauri::AppHandle) {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     inspector(&app, 0);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
     let _ = app;
 }
 
 /// Close the Web Inspector (used when the setting is switched off).
 #[tauri::command]
 pub fn close_devtools(app: tauri::AppHandle) {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     inspector(&app, 1);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
     let _ = app;
 }
 

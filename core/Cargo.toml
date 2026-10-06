@@ -84,6 +84,10 @@ objc2-core-foundation = { version = "0.3", features = [
 libc = "0.2"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
+# Linux: the freedesktop thumbnail cache keys files by the md5 of their URI.
+[target.'cfg(target_os = "linux")'.dependencies]
+md-5 = "0.10"
+
 # Windows: drive enumeration (Alt+F1/F2 picker) + Shell thumbnails (file preview).
 [target.'cfg(windows)'.dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }

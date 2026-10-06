@@ -9,7 +9,7 @@ described in [PRODUCT.md](PRODUCT.md).
 ## The shape of the system
 
 Delight is a Tauri 2 application: a Rust process owns the window and all IO,
-and a webview (WKWebView on macOS, WebView2 on Windows) renders the entire
+and a webview (WKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux) renders the entire
 interface from a vanilla TypeScript + Vite frontend. The two sides talk over
 Tauri's IPC — the frontend calls `invoke("list_dir", …)` and gets JSON back;
 the backend pushes events (progress, menu actions) the other way.
@@ -264,11 +264,13 @@ usually, a human.
 
 `pnpm tauri build` produces `Delight.app` on macOS (self-signed — which keeps
 TCC permission grants across rebuilds, and equally means Gatekeeper on *another*
-Mac will refuse it until the quarantine attribute is cleared) and a standalone `delight.exe` plus an
-NSIS installer on Windows. GitHub Actions builds Windows releases on version
-tags: it checks out both repos (the editor linkage above), installs both
-dependency trees, builds, and attaches versioned and stable-named binaries
-with checksums to a draft GitHub Release. The stable names exist so
+Mac will refuse it until the quarantine attribute is cleared), a standalone `delight.exe` plus an
+NSIS installer on Windows, and a `.deb` plus an AppImage on Linux
+(`tauri.linux.conf.json`). GitHub Actions builds the Windows and Linux releases
+on version tags, in parallel: each job checks out both repos (the editor linkage
+above), installs both dependency trees, builds, and uploads versioned and
+stable-named binaries with checksums; a final job collects them into one draft
+GitHub Release. The stable names exist so
 `releases/latest/download/…` links stay valid across versions. macOS release
 builds are made on a Mac and uploaded to the same release — CI runners can't
 hold the local signing key, and macOS runner minutes bill at ten times the

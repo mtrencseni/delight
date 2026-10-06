@@ -1,7 +1,7 @@
 # Releasing
 
-`release.yml` builds Delight for Windows x64 and attaches the binary to a GitHub
-Release. Assets live on the Release, not in git, so clones stay small (the whole
+`release.yml` builds Delight for Windows x64 (portable exe) and Linux x64 (.deb
++ AppImage) and attaches the binaries to a GitHub Release. Assets live on the Release, not in git, so clones stay small (the whole
 history is a couple of MB; one build of the exe is ~12 MB and git would keep
 every copy forever).
 
