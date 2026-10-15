@@ -15,6 +15,7 @@ export interface SettingsHooks {
   onFolderChips(v: boolean): void;
   onLaunchApps(v: boolean): void;
   onPreviewIcons(v: boolean): void;
+  onSystemFont(v: boolean): void;
   onHighlightToday(v: boolean): void;
   onStripedRows(v: boolean): void;
   onSizeBars(v: boolean): void;
@@ -173,6 +174,7 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
   const lowerSw = makeSwitch(() => hooks.get().lowercaseTabs, hooks.onLowercaseTabs);
   const sysIconSw = makeSwitch(() => hooks.get().systemIcons, hooks.onSystemIcons);
   const previewIconSw = makeSwitch(() => hooks.get().previewIcons, hooks.onPreviewIcons);
+  const sysFontSw = makeSwitch(() => hooks.get().systemFont, hooks.onSystemFont);
   const launchAppsSw = makeSwitch(() => hooks.get().launchApps, hooks.onLaunchApps);
   const createdColSw = makeSwitch(() => hooks.get().showCreated, hooks.onShowCreated);
   const permsColSw = makeSwitch(() => hooks.get().showPermissions, hooks.onShowPermissions);
@@ -255,6 +257,7 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     "Appearance",
     row("Theme", `Light, dark, or follow ${isMac ? "macOS" : "the system"}`, seg),
     row("Show hidden files", `Dotfiles in both panes — ${hint("toggleHidden")}`, hiddenSw),
+    row("System font", "Use the OS's interface font instead of the bundled Inter", sysFontSw),
     row("Default zoom", `Startup zoom level — ${hint("zoomReset")} returns here`, stepper)
   );
 
@@ -341,6 +344,7 @@ export function buildSettingsPage(hooks: SettingsHooks): SettingsPage {
     setSwitch(lowerSw, s.lowercaseTabs);
     setSwitch(sysIconSw, s.systemIcons);
     setSwitch(previewIconSw, s.previewIcons);
+    setSwitch(sysFontSw, s.systemFont);
     setSwitch(launchAppsSw, s.launchApps);
     setSwitch(chipCardsSw, s.chipCards);
     setSwitch(bigChipsSw, s.bigChips);

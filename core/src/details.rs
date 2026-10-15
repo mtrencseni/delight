@@ -2,8 +2,6 @@
 //! folder count + first children, and a QuickLook content thumbnail. Fetched
 //! only for the one selected item, so it never touches the listing hot path.
 
-// The QuickLook (macOS) and Shell (Windows) thumbnail paths both encode a PNG.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::icons::to_data_uri;
 use crate::archive::{self, Loc};
 use serde::Serialize;
@@ -401,7 +399,65 @@ mod win_thumb_tests {
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+// Linux: the freedesktop thumbnail cache — whatever GNOME Files, Dolphin or
+// Thunar already rendered for this file, found under the spec's key (md5 of the
+// file URI). Read-only like the other two platforms: Delight never renders or
+// writes thumbnails, so a file no other app has shown yet simply has none.
+// ponytail: the cache's Thumb::MTime isn't checked, so an edited file can show
+// its old thumbnail until the desktop refreshes it.
+#[cfg(target_os = "linux")]
+fn thumbnail(p: &Path, size: u32) -> Option<String> {
+    use md5::{Digest, Md5};
+    let hash = format!("{:x}", Md5::digest(file_uri(p).as_bytes()));
+    let cache = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?
+        .join("thumbnails");
+    // Smallest cached size that still covers the request, else the biggest there is.
+    const DIRS: [(&str, u32); 4] =
+        [("normal", 128), ("large", 256), ("x-large", 512), ("xx-large", 1024)];
+    let order = DIRS
+        .iter()
+        .filter(|d| d.1 >= size)
+        .chain(DIRS.iter().rev().filter(|d| d.1 < size));
+    for (dir, _) in order {
+        if let Ok(png) = std::fs::read(cache.join(dir).join(format!("{hash}.png"))) {
+            return Some(to_data_uri(&png));
+        }
+    }
+    None
+}
+
+/// The `file://` URI as g_filename_to_uri spells it — RFC 2396 unreserved
+/// characters and `/` kept, every other byte percent-encoded — because that
+/// exact string is what the thumbnail cache hashes.
+#[cfg(target_os = "linux")]
+fn file_uri(p: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let mut s = String::from("file://");
+    for &b in p.as_os_str().as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'!' | b'~' | b'*'
+            | b'\'' | b'(' | b')' | b'/' => s.push(b as char),
+            _ => s.push_str(&format!("%{b:02X}")),
+        }
+    }
+    s
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_tests {
+    #[test]
+    fn file_uri_matches_glib() {
+        // g_filename_to_uri("/home/me/My Photos/ünï.jpg")
+        assert_eq!(
+            super::file_uri(std::path::Path::new("/home/me/My Photos/ünï.jpg")),
+            "file:///home/me/My%20Photos/%C3%BCn%C3%AF.jpg"
+        );
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 fn thumbnail(_p: &Path, _size: u32) -> Option<String> {
     None
 }

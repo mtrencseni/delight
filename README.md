@@ -10,6 +10,8 @@ look-alike).
 
 - [**macOS** (Apple silicon)](https://github.com/mtrencseni/delight/releases/latest/download/Delight-macos_arm64.dmg)
 - [**Windows** (x64)](https://github.com/mtrencseni/delight/releases/latest/download/Delight-win_x64-portable.exe)
+- [**Linux** (x64 AppImage)](https://github.com/mtrencseni/delight/releases/latest/download/Delight-linux_x64.AppImage)
+  · [.deb](https://github.com/mtrencseni/delight/releases/latest/download/Delight-linux_x64.deb)
 
 ## Features
 
@@ -122,7 +124,7 @@ and **⌘K** shows them on a drawn keyboard. Defaults (on Windows, read every
 | ⌥S | Newest file on the Desktop |
 | ⌘I | Get Info in Finder _(macOS)_ |
 | ⌘1 / ⌘2 | Favorites — left / right pane |
-| **Alt+F1 / Alt+F2** | Drive picker for the left / right pane _(Windows)_ |
+| **Alt+F1 / Alt+F2** | Drive picker for the left / right pane _(Windows, Linux)_ |
 | ⌘N ⌘E ⌘S ⌘C ⌘M | Sort by name / ext / size / created / modified |
 | ⌘+ ⌘− ⌘0 | Zoom in / out / reset |
 | ⌘⇧. | Show / hide hidden files |
@@ -132,14 +134,15 @@ and **⌘K** shows them on a drawn keyboard. Defaults (on Windows, read every
 
 ## Platform support
 
-**macOS and Windows** both build and run. Previews and thumbnails work on both
-(Windows via the Shell's image factory), drives are reachable with the Alt+F1/F2
-picker, and ⌘ shortcuts map to Ctrl. The server build is headless — no webview,
-so it runs on a Linux box that has no desktop at all. The few macOS-only niceties — the
-standalone Quick Look panel, system file icons in list and grid, the global menu
-bar — degrade gracefully to the vector icons and the in-pane preview; the app
-looks and behaves the same otherwise. Linux is not yet built, but the code is
-fenced for it.
+**macOS, Windows and Linux** all build and run. Previews and thumbnails work on
+all three (Windows via the Shell's image factory, Linux from the desktop's
+freedesktop thumbnail cache), drives and mounted volumes are reachable with the
+Alt+F1/F2 picker, and ⌘ shortcuts map to Ctrl. The server build is headless — no
+webview, so it runs on a Linux box that has no desktop at all. The few macOS-only
+niceties — the standalone Quick Look panel, system file icons in list and grid,
+the global menu bar — degrade gracefully to the vector icons and the in-pane
+preview; the app looks and behaves the same otherwise. SMB is macOS and Windows
+only so far; on Linux `smb://` reports "not supported".
 
 ## Development
 
@@ -172,12 +175,16 @@ The code preview reuses [Buffers](https://github.com/mtrencseni/buffers)' editor
 verbatim, so **both repos must be checked out side by side** — `src/langs.ts` and
 `src/editor-core.ts` re-export from `../../Buffers/src/`.
 
-Releases are cut by pushing a `v*` tag: CI builds and publishes the Windows
-binary, and the macOS build is attached from a Mac. See [CLAUDE.md](CLAUDE.md).
+On Linux, `scripts/linux-build.sh` runs the same build in a Docker container, so
+the GTK/WebKitGTK dev packages never need installing on the host.
+
+Releases are cut by pushing a `v*` tag: CI builds and publishes the Windows and
+Linux binaries, and the macOS build is attached from a Mac. See [CLAUDE.md](CLAUDE.md).
 
 ## Tech
 
-Tauri 2 (Rust backend + WKWebView on macOS / WebView2 on Windows) with a vanilla
+Tauri 2 (Rust backend + WKWebView on macOS / WebView2 on Windows / WebKitGTK on
+Linux) with a vanilla
 TypeScript / Vite frontend. All filesystem access goes through Rust commands —
 the webview never touches the disk.
 

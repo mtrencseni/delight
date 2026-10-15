@@ -1,6 +1,6 @@
-//! Filesystem roots abstraction. On Unix there is a single root; on Windows
-//! this becomes the set of drive letters. v0.1 UI doesn't surface roots yet,
-//! but the type and command exist so drives slot in without refactoring.
+//! Filesystem roots abstraction: what the Alt+F1 / Alt+F2 drive picker lists.
+//! macOS has a single root; Windows has drive letters; Linux has `/` plus the
+//! volumes the desktop mounted for the user.
 
 use serde::Serialize;
 
@@ -11,13 +11,66 @@ pub struct FsRoot {
     pub path: String,
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "linux")))]
 fn native_roots() -> Vec<FsRoot> {
     let sep = std::path::MAIN_SEPARATOR_STR;
     vec![FsRoot {
         name: sep.to_string(),
         path: sep.to_string(),
     }]
+}
+
+#[cfg(target_os = "linux")]
+fn native_roots() -> Vec<FsRoot> {
+    // "/" plus what udisks mounts for the user (/media, /run/media) and hand
+    // mounts under /mnt — the Linux answer to Windows' drive letters. Read from
+    // /proc/mounts, which never touches the volumes themselves.
+    let mut roots = vec![FsRoot { name: "/".to_string(), path: "/".to_string() }];
+    let mounts = std::fs::read_to_string("/proc/mounts").unwrap_or_default();
+    for line in mounts.lines() {
+        let Some(raw) = line.split(' ').nth(1) else { continue };
+        let path = unescape_mount(raw);
+        let user_volume = ["/media/", "/run/media/", "/mnt/"].iter().any(|p| path.starts_with(p));
+        if user_volume && !roots.iter().any(|r| r.path == path) {
+            let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+            roots.push(FsRoot { name, path });
+        }
+    }
+    roots
+}
+
+/// /proc/mounts writes space, tab, newline and backslash as `\ooo` octal escapes.
+#[cfg(target_os = "linux")]
+fn unescape_mount(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let esc = (b[i] == b'\\' && i + 3 < b.len())
+            .then(|| u8::from_str_radix(&s[i + 1..i + 4], 8).ok())
+            .flatten();
+        match esc {
+            Some(c) => {
+                out.push(c);
+                i += 4;
+            }
+            None => {
+                out.push(b[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    #[test]
+    fn mount_escapes_decode() {
+        assert_eq!(super::unescape_mount("/media/me/My\\040Disk"), "/media/me/My Disk");
+        assert_eq!(super::unescape_mount("/mnt/plain"), "/mnt/plain");
+        assert_eq!(super::unescape_mount("/mnt/trailing\\"), "/mnt/trailing\\");
+    }
 }
 
 #[cfg(windows)]

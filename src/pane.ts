@@ -2946,8 +2946,14 @@ export class PaneView {
     void invoke<{ name: string; path: string }[]>("fs_roots")
       .then((drives) => {
         this.driveList = Array.isArray(drives) ? drives : [];
+        // Longest matching root wins: on Linux "/" is a prefix of every path,
+        // so the first match would always be "/" and never the mounted volume.
         const cur = this.st.path.toUpperCase();
-        const at = this.driveList.findIndex((d) => cur.startsWith(d.path.toUpperCase()));
+        const at = this.driveList.reduce(
+          (best, d, i) =>
+            cur.startsWith(d.path.toUpperCase()) && (best < 0 || d.path.length > this.driveList[best].path.length) ? i : best,
+          -1,
+        );
         this.driveActive = at >= 0 ? at : 0;
         this.renderDrives();
       })

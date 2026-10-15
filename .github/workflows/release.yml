@@ -1,7 +1,8 @@
 # Build Delight and publish it to a GitHub Release.
 #
-# Fires on a version tag (v0.1.0 → release "Delight 0.1.0"), or by hand from the
-# Actions tab for a dry run that builds and uploads an artifact without releasing.
+# Fires on a version tag (v0.1.0 → release "Delight v0.1.0"), or by hand from the
+# Actions tab for a dry run that builds and uploads artifacts without releasing.
+# Windows and Linux build in parallel; the `release` job collects both.
 #
 # NOTE: Delight's frontend re-exports the shared editor + language registry from
 # the Buffers repo (src/langs.ts, src/editor-core.ts point at ../../Buffers/src/…),
@@ -53,10 +54,8 @@ jobs:
               exit 1
             fi
             echo "version=$tag" >> "$GITHUB_OUTPUT"
-            echo "release=true" >> "$GITHUB_OUTPUT"
           else
             echo "version=$conf" >> "$GITHUB_OUTPUT"
-            echo "release=false" >> "$GITHUB_OUTPUT"
           fi
 
       # Match the pnpm major that wrote pnpm-lock.yaml, so --frozen-lockfile
@@ -136,11 +135,116 @@ jobs:
           path: dist/*
           retention-days: 7
 
+  linux-x64:
+    # The oldest LTS the runners offer: an AppImage carries its own libraries
+    # but not glibc, so building on the oldest base runs on the most machines.
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Check out Delight
+        uses: actions/checkout@v7
+        with:
+          path: delight
+
+      - name: Check out Buffers (shared editor + language registry)
+        uses: actions/checkout@v7
+        with:
+          repository: mtrencseni/buffers
+          path: Buffers
+          token: ${{ secrets.BUFFERS_TOKEN }}
+
+      - name: Resolve version
+        id: v
+        run: |
+          conf=$(node -p "require('./delight/src-tauri/tauri.conf.json').version")
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            tag="${GITHUB_REF_NAME#v}"
+            if [[ "$tag" != "$conf" ]]; then
+              echo "::error::Tag v$tag does not match tauri.conf.json version $conf"
+              exit 1
+            fi
+            echo "version=$tag" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=$conf" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Tauri's documented WebKitGTK toolchain for Ubuntu 22.04.
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            delight/pnpm-lock.yaml
+            Buffers/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: delight -> target
+
+      - name: Install frontend dependencies
+        working-directory: delight
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Buffers dependencies
+        working-directory: Buffers
+        run: pnpm install --frozen-lockfile
+
+      # tauri.linux.conf.json picks the targets: a .deb and a portable AppImage.
+      - name: Build
+        working-directory: delight
+        run: pnpm tauri build
+
+      - name: Name the artifacts
+        id: art
+        run: |
+          v="${{ steps.v.outputs.version }}"
+          mkdir -p dist
+          deb=$(ls delight/target/release/bundle/deb/*.deb)
+          app=$(ls delight/target/release/bundle/appimage/*.AppImage)
+          # Versioned copy for the archive, stable name for the README's
+          # /releases/latest/download/… links (same scheme as the exe).
+          cp "$deb" "dist/Delight-$v-linux_x64.deb";     cp "$deb" dist/Delight-linux_x64.deb
+          cp "$app" "dist/Delight-$v-linux_x64.AppImage"; cp "$app" dist/Delight-linux_x64.AppImage
+          (cd dist && for f in *; do sha256sum "$f" > "$f.sha256"; done)
+          echo "name=Delight-$v-linux_x64" >> "$GITHUB_OUTPUT"
+          ls -l dist
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.art.outputs.name }}
+          path: dist/*
+          retention-days: 7
+
+  # One job creates the release, after every build has uploaded its files —
+  # two jobs racing softprops/action-gh-release on the same tag can end up with
+  # two draft releases.
+  release:
+    needs: [windows-x64, linux-x64]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          path: dist
+          merge-multiple: true
+
       - name: Publish release
-        if: steps.v.outputs.release == 'true'
         uses: softprops/action-gh-release@v3
         with:
-          name: Delight ${{ steps.v.outputs.version }}
+          name: Delight ${{ github.ref_name }}
           draft: true
           generate_release_notes: true
           files: dist/*
