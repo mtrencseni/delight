@@ -472,6 +472,16 @@ class App {
       columnsChanged: () => {
         for (const view of this.views.values()) view.panes?.forEach((p) => p.refreshColumns());
       },
+      togglePreviewInto: (target: PaneView) => {
+        if (this.previewTarget === target) {
+          this.closePanePreview();
+          return;
+        }
+        if (this.previewTarget) this.closePanePreview(); // open on the other side → swap
+        const panes = this.views.get(tab.id)?.panes;
+        const source = panes?.[panes[0] === target ? 1 : 0];
+        if (source) this.togglePanePreview(source);
+      },
       showHidden: () => state.settings.showHidden,
       sysIcons: () => state.settings.systemIcons,
       locations: () => state.locations,

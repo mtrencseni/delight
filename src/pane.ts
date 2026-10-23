@@ -104,6 +104,9 @@ export interface PaneHost {
   sortChanged(key: SortKey, dir: SortDir): void;
   /** Column order changed — refresh columns across panes (shared order). */
   columnsChanged(): void;
+  /** The preview segment button: show the OTHER pane's cursor item in `target`
+      (or close the preview if `target` is already showing it). */
+  togglePreviewInto(target: PaneView): void;
   showHidden(): boolean;
   sysIcons(): boolean;
   locations(): Location[];
@@ -156,6 +159,7 @@ export class PaneView {
   private sizeSlider: HTMLInputElement;
   private viewSeg: HTMLElement;
   private viewBtns = new Map<ViewMode, HTMLButtonElement>();
+  private previewBtn: HTMLButtonElement;
   private locBtn: HTMLButtonElement;
   private locPop: HTMLElement | null = null;
   /** Keyboard-highlighted favorite in the open dropdown. */
@@ -235,6 +239,16 @@ export class PaneView {
       this.viewBtns.set(mode, b);
       this.viewSeg.append(b);
     }
+    // Fourth state: this pane is showing the other pane's cursor item (Space).
+    this.previewBtn = document.createElement("button");
+    this.previewBtn.className = "segbtn pvbtn";
+    this.previewBtn.innerHTML = icons.viewPreview;
+    this.previewBtn.title = "Preview the other pane's selection here";
+    this.previewBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.host.togglePreviewInto(this);
+    });
+    this.viewSeg.append(this.previewBtn);
 
     this.locBtn = document.createElement("button");
     this.locBtn.className = "pbtn";
@@ -302,7 +316,9 @@ export class PaneView {
     this.el.addEventListener("mousedown", (e) => {
       // Clicks inside the read-only code preview drive the editor (select / scroll
       // / find) — don't let them bubble up to dismiss the preview.
-      if ((e.target as HTMLElement | null)?.closest(".cmprev")) return;
+      // Likewise the preview segment button: activating would dismiss the
+      // very preview it toggles, and the browsing pane should keep focus.
+      if ((e.target as HTMLElement | null)?.closest(".cmprev, .pvbtn")) return;
       this.host.activate(this);
     });
     // Keyboard navigation suppresses the mouse-hover highlight (it's confusing to
@@ -1350,7 +1366,15 @@ export class PaneView {
     this.el.classList.toggle("chips", this.isChips());
     this.el.classList.toggle("chip-cards", this.isChips() && state.settings.chipCards);
     this.el.classList.toggle("big-chips", this.isChips() && state.settings.bigChips);
-    for (const [mode, btn] of this.viewBtns) btn.classList.toggle("on", mode === this.st.viewMode);
+    this.syncViewSeg();
+  }
+
+  /** Light the segment: the preview button while previewing (the listing is
+      hidden then), else the current view mode. */
+  private syncViewSeg(): void {
+    const pv = this.isPreviewing();
+    for (const [mode, btn] of this.viewBtns) btn.classList.toggle("on", !pv && mode === this.st.viewMode);
+    this.previewBtn.classList.toggle("on", pv);
   }
 
   // ---- sorting / view building -----------------------------------------------
@@ -2686,6 +2710,7 @@ export class PaneView {
     this.previewEl.replaceChildren(stage, info);
     this.previewEl.classList.remove("hidden");
     this.el.classList.add("previewing");
+    this.syncViewSeg();
   }
 
   private setPreviewImg(stage: HTMLElement, uri: string): void {
@@ -2708,6 +2733,7 @@ export class PaneView {
     this.previewEl.classList.remove("hidden");
     this.el.classList.add("previewing", "code-preview");
     this.codePreviewActive = true;
+    this.syncViewSeg();
 
     void this.readPreviewText(dirPath, entry.name)
       .then((res) => {
@@ -2777,6 +2803,7 @@ export class PaneView {
     this.previewEl.replaceChildren(frame);
     this.previewEl.classList.remove("hidden");
     this.el.classList.add("previewing");
+    this.syncViewSeg();
 
     // Inside an archive or over SFTP there is no file for the OS to open, so
     // the asset protocol can't serve it. Fetch the bytes through the same
@@ -2859,6 +2886,7 @@ export class PaneView {
       this.codePreview = null;
     }
     this.previewEl.replaceChildren();
+    this.syncViewSeg();
     this.renderRows(); // scroller had zero height while hidden — repopulate
   }
 

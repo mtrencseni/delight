@@ -48,6 +48,10 @@ export const icons = {
   viewChips: svg(
     '<rect x="2" y="2.5" width="12" height="5.5" rx="1.2"/><path d="M2.5 10.6h11M2.5 13h7"/>'
   ),
+  // Preview "view": a framed picture with a sun + hill.
+  viewPreview: svg(
+    '<rect x="2" y="2.5" width="12" height="11" rx="1.3"/><circle cx="6" cy="6.3" r="1.1"/><path d="m2.5 11.8 3.3-3.1 2.4 2.2 2.6-2.8 2.7 2.8"/>'
+  ),
   bookmarks: svg('<path d="M4 2.5h8v11l-4-2.6-4 2.6z"/>'),
   // A disk drive: a rounded body with an activity light (for the drive picker).
   drive: svg('<rect x="2" y="4.5" width="12" height="7" rx="1.3"/><circle cx="11.5" cy="8" r="0.9"/><path d="M4.5 8h3"/>'),
